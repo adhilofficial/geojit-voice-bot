@@ -159,3 +159,9 @@ export async function downloadInterestedCsv() {
 
   URL.revokeObjectURL(downloadUrl);
 }
+
+export async function checkBackendHealth() {
+  const response = await fetch(`${API_BASE_URL}/health`);
+
+  return handleResponse(response);
+}

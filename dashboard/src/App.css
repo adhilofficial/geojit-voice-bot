@@ -1803,3 +1803,22 @@ table {
   }
 }
 
+.backend-online {
+  color: #d8f5e8;
+}
+
+.backend-offline {
+  color: #ffd6d6;
+  border-color: rgba(255, 113, 113, 0.2);
+  background: rgba(180, 48, 48, 0.14);
+}
+
+.status-dot-online {
+  background: #5ee6a4;
+  box-shadow: 0 0 0 5px rgba(94, 230, 164, 0.1);
+}
+
+.status-dot-offline {
+  background: #ff7777;
+  box-shadow: 0 0 0 5px rgba(255, 119, 119, 0.1);
+}

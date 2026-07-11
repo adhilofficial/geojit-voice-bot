@@ -2,6 +2,7 @@
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -26,6 +27,7 @@ import {
 import MockCallModal from "./components/MockCallModal";
 
 import {
+  checkBackendHealth,
   createLead,
   downloadInterestedCsv,
   endMockCall,
@@ -103,13 +105,22 @@ function isCallCompleted(call) {
 }
 
 function App() {
+  const messageTimerRef = useRef(null);
+
   const [leads, setLeads] = useState([]);
 
   const [form, setForm] = useState(initialForm);
   const [csvFile, setCsvFile] = useState(null);
+
   const [csvBatchName, setCsvBatchName] = useState(
     "Geojit CSV Campaign"
   );
+
+  const [backendConnected, setBackendConnected] =
+    useState(false);
+
+  const [checkingBackend, setCheckingBackend] =
+    useState(true);
 
   const [activeCall, setActiveCall] = useState(null);
   const [callLoading, setCallLoading] = useState(false);
@@ -132,14 +143,33 @@ function App() {
   const [message, setMessage] = useState(null);
 
   const showMessage = useCallback((type, text) => {
+    if (messageTimerRef.current) {
+      window.clearTimeout(messageTimerRef.current);
+    }
+
     setMessage({
       type,
       text,
     });
 
-    window.setTimeout(() => {
+    messageTimerRef.current = window.setTimeout(() => {
       setMessage(null);
+      messageTimerRef.current = null;
     }, 5000);
+  }, []);
+
+  const checkConnection = useCallback(async () => {
+    try {
+      setCheckingBackend(true);
+
+      const response = await checkBackendHealth();
+
+      setBackendConnected(response?.success === true);
+    } catch {
+      setBackendConnected(false);
+    } finally {
+      setCheckingBackend(false);
+    }
   }, []);
 
   const loadLeads = useCallback(async () => {
@@ -153,7 +183,10 @@ function App() {
       });
 
       setLeads(response.leads || []);
+      setBackendConnected(true);
     } catch (error) {
+      setBackendConnected(false);
+
       showMessage(
         "error",
         error.message || "Unable to load customers"
@@ -172,6 +205,26 @@ function App() {
       window.clearTimeout(timeout);
     };
   }, [loadLeads]);
+
+  useEffect(() => {
+    checkConnection();
+
+    const interval = window.setInterval(() => {
+      checkConnection();
+    }, 30000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [checkConnection]);
+
+  useEffect(() => {
+    return () => {
+      if (messageTimerRef.current) {
+        window.clearTimeout(messageTimerRef.current);
+      }
+    };
+  }, []);
 
   const statistics = useMemo(() => {
     const total = leads.length;
@@ -270,6 +323,15 @@ function App() {
   async function handleAddLead(event) {
     event.preventDefault();
 
+    if (!backendConnected) {
+      showMessage(
+        "error",
+        "Backend is disconnected. Please wait and try again."
+      );
+
+      return;
+    }
+
     if (!form.phone.trim()) {
       showMessage("error", "Phone number is required");
       return;
@@ -308,6 +370,15 @@ function App() {
 
   async function handleCsvUpload(event) {
     event.preventDefault();
+
+    if (!backendConnected) {
+      showMessage(
+        "error",
+        "Backend is disconnected. Please wait and try again."
+      );
+
+      return;
+    }
 
     if (!csvFile) {
       showMessage("error", "Choose a CSV file first");
@@ -354,6 +425,15 @@ function App() {
   }
 
   async function handleExportInterested() {
+    if (!backendConnected) {
+      showMessage(
+        "error",
+        "Backend is disconnected. Export is unavailable."
+      );
+
+      return;
+    }
+
     try {
       setExporting(true);
 
@@ -375,6 +455,15 @@ function App() {
   }
 
   async function handleStartMockCall(lead) {
+    if (!backendConnected) {
+      showMessage(
+        "error",
+        "Backend is disconnected. Calls cannot be started."
+      );
+
+      return;
+    }
+
     if (campaignActive) {
       showMessage(
         "error",
@@ -413,6 +502,15 @@ function App() {
   }
 
   async function handleStartCampaign() {
+    if (!backendConnected) {
+      showMessage(
+        "error",
+        "Backend is disconnected. Campaign cannot start."
+      );
+
+      return;
+    }
+
     if (campaignActive) {
       return;
     }
@@ -583,8 +681,6 @@ function App() {
         await endMockCall(activeCall.leadId);
       }
 
-      await loadLeads();
-
       if (campaignActive) {
         const nextIndex = campaignIndex + 1;
 
@@ -612,11 +708,16 @@ function App() {
           );
         }
 
+        await loadLeads();
+
         return;
       }
 
       setActiveCall(null);
+
       showMessage("success", "Mock call ended");
+
+      await loadLeads();
     } catch (error) {
       showMessage(
         "error",
@@ -632,31 +733,47 @@ function App() {
       setCallLoading(true);
 
       if (
+        backendConnected &&
         activeCall?.leadId &&
         !isCallCompleted(activeCall)
       ) {
         await endMockCall(activeCall.leadId);
       }
 
-      setActiveCall(null);
-      resetCampaignState();
-
       showMessage("success", "Campaign stopped");
-
-      await loadLeads();
     } catch (error) {
       showMessage(
         "error",
-        error.message || "Unable to stop campaign"
+        error.message ||
+          "Campaign stopped locally, but the active call could not be updated"
       );
     } finally {
+      setActiveCall(null);
+      resetCampaignState();
       setCallLoading(false);
+
+      if (backendConnected) {
+        await loadLeads();
+      }
     }
   }
 
   async function handleCloseCallModal() {
     setActiveCall(null);
-    await loadLeads();
+
+    if (backendConnected) {
+      await loadLeads();
+    }
+  }
+
+  async function handleRefresh() {
+    await checkConnection();
+
+    try {
+      await loadLeads();
+    } catch {
+      // loadLeads handles its own error state.
+    }
   }
 
   return (
@@ -701,9 +818,26 @@ function App() {
           </button>
         </nav>
 
-        <div className="sidebar-note">
-          <span className="status-dot" />
-          Backend connected
+        <div
+          className={`sidebar-note ${
+            backendConnected
+              ? "backend-online"
+              : "backend-offline"
+          }`}
+        >
+          <span
+            className={`status-dot ${
+              backendConnected
+                ? "status-dot-online"
+                : "status-dot-offline"
+            }`}
+          />
+
+          {checkingBackend
+            ? "Checking backend..."
+            : backendConnected
+              ? "Backend connected"
+              : "Backend disconnected"}
         </div>
       </aside>
 
@@ -727,7 +861,9 @@ function App() {
               className="export-button"
               type="button"
               onClick={handleExportInterested}
-              disabled={exporting}
+              disabled={
+                exporting || !backendConnected
+              }
             >
               <Download size={17} />
 
@@ -751,7 +887,11 @@ function App() {
                 className="start-campaign-button"
                 type="button"
                 onClick={handleStartCampaign}
-                disabled={callLoading || loading}
+                disabled={
+                  callLoading ||
+                  loading ||
+                  !backendConnected
+                }
               >
                 <Play size={17} />
                 Start Campaign
@@ -761,12 +901,16 @@ function App() {
             <button
               className="secondary-button"
               type="button"
-              onClick={loadLeads}
+              onClick={handleRefresh}
               disabled={loading || callLoading}
             >
               <RefreshCw
                 size={17}
-                className={loading ? "spin" : ""}
+                className={
+                  loading || checkingBackend
+                    ? "spin"
+                    : ""
+                }
               />
 
               Refresh
@@ -915,6 +1059,9 @@ function App() {
                   value={form.name}
                   onChange={handleInputChange}
                   placeholder="Example: Arun Kumar"
+                  disabled={
+                    addingLead || campaignActive
+                  }
                 />
               </div>
 
@@ -930,6 +1077,9 @@ function App() {
                   value={form.phone}
                   onChange={handleInputChange}
                   placeholder="9876543210"
+                  disabled={
+                    addingLead || campaignActive
+                  }
                   required
                 />
               </div>
@@ -946,13 +1096,20 @@ function App() {
                   value={form.batchName}
                   onChange={handleInputChange}
                   placeholder="Geojit SIP Campaign"
+                  disabled={
+                    addingLead || campaignActive
+                  }
                 />
               </div>
 
               <button
                 className="primary-button"
                 type="submit"
-                disabled={addingLead || campaignActive}
+                disabled={
+                  addingLead ||
+                  campaignActive ||
+                  !backendConnected
+                }
               >
                 <Plus size={17} />
 
@@ -989,6 +1146,9 @@ function App() {
                     setCsvBatchName(event.target.value)
                   }
                   placeholder="Geojit CSV Campaign"
+                  disabled={
+                    uploadingCsv || campaignActive
+                  }
                 />
               </div>
 
@@ -1005,6 +1165,9 @@ function App() {
                     setCsvFile(
                       event.target.files?.[0] || null
                     )
+                  }
+                  disabled={
+                    uploadingCsv || campaignActive
                   }
                   required
                 />
@@ -1025,7 +1188,9 @@ function App() {
                 className="primary-button"
                 type="submit"
                 disabled={
-                  uploadingCsv || campaignActive
+                  uploadingCsv ||
+                  campaignActive ||
+                  !backendConnected
                 }
               >
                 <Upload size={17} />
@@ -1213,6 +1378,7 @@ function App() {
                               handleStartMockCall(lead)
                             }
                             disabled={
+                              !backendConnected ||
                               callLoading ||
                               campaignActive ||
                               optedOut ||

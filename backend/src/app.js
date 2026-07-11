@@ -4,6 +4,14 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 
+const liveCallRoutes = require(
+  "./routes/liveCallRoutes"
+);
+
+const webhookRoutes = require(
+  "./routes/webhookRoutes"
+);
+
 const leadRoutes = require("./routes/leadRoutes");
 
 const app = express();
@@ -65,6 +73,13 @@ app.get("/", (req, res) => {
     leads: "/api/leads",
   });
 });
+
+app.use("/api/leads", leadRoutes);
+app.use("/api/calls", callRoutes);
+
+// New Exotel routes
+app.use("/api/live-calls", liveCallRoutes);
+app.use("/api/webhooks", webhookRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

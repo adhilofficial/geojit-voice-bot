@@ -57,6 +57,14 @@ app.use((error, req, res, next) => {
     message: error.message || "Internal server error",
   });
 });
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Geojit Voice Bot backend is running",
+    health: "/api/health",
+    leads: "/api/leads",
+  });
+});
 
 app.use((req, res) => {
   res.status(404).json({

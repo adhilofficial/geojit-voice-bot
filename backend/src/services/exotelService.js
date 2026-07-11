@@ -38,6 +38,26 @@ function parseResponseBody(rawBody) {
   }
 }
 
+function extractExotelError(data, rawBody, status) {
+  if (data?.RestException?.Message) {
+    return data.RestException.Message;
+  }
+
+  if (data?.message) {
+    return data.message;
+  }
+
+  const xmlMessage = String(rawBody || "").match(
+    /<Message>([\s\S]*?)<\/Message>/i
+  );
+
+  if (xmlMessage?.[1]) {
+    return xmlMessage[1].trim();
+  }
+
+  return `Exotel returned HTTP ${status}`;
+}
+
 async function startExotelFlowCall(lead) {
   const accountSid = requireEnvironmentVariable(
     "EXOTEL_ACCOUNT_SID"
@@ -90,11 +110,8 @@ async function startExotelFlowCall(lead) {
   requestBody.set("CallType", "trans");
   requestBody.set("TimeLimit", "180");
   requestBody.set("TimeOut", "30");
-  requestBody.set("StatusCallback", statusCallback);
-  requestBody.set("StatusCallbackEvents", "terminal");
-
-  // MongoDB lead ID returned through the webhook.
-  requestBody.set("CustomField", String(lead._id));
+ requestBody.set("StatusCallback", statusCallback);
+requestBody.set("CustomField", String(lead._id));
 
   const encodedCredentials = Buffer.from(
     `${apiKey}:${apiToken}`
@@ -117,14 +134,14 @@ async function startExotelFlowCall(lead) {
   const data = parseResponseBody(rawBody);
 
   if (!response.ok) {
-    const providerMessage =
-      data?.RestException?.Message ||
-      data?.message ||
-      data?.raw ||
-      `Exotel returned HTTP ${response.status}`;
-
-    throw new Error(providerMessage);
-  }
+  throw new Error(
+    extractExotelError(
+      data,
+      rawBody,
+      response.status
+    )
+  );
+}
 
   const call = data.Call || data.call;
 
@@ -142,6 +159,6 @@ async function startExotelFlowCall(lead) {
   };
 }
 
-module.exports = {
+module.exports = {  
   startExotelFlowCall,
 };

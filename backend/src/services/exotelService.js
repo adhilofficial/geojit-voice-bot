@@ -15,6 +15,10 @@ function normalizeIndianPhone(phone) {
     return `+91${digits}`;
   }
 
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return `+91${digits.slice(1)}`;
+  }
+
   if (digits.length === 12 && digits.startsWith("91")) {
     return `+${digits}`;
   }
@@ -69,7 +73,6 @@ function parseExotelResponse(rawBody) {
     const callSid =
       getXmlValue(rawBody, "Sid") ||
       getXmlValue(rawBody, "CallSid");
-
     const status = getXmlValue(rawBody, "Status");
 
     return {
@@ -96,6 +99,22 @@ function extractExotelError(rawBody, data, statusCode) {
   );
 }
 
+function getRequestTimeout() {
+  const configuredTimeout = Number(
+    process.env.EXOTEL_REQUEST_TIMEOUT_MS
+  );
+
+  if (
+    Number.isFinite(configuredTimeout) &&
+    configuredTimeout >= 5000 &&
+    configuredTimeout <= 60000
+  ) {
+    return configuredTimeout;
+  }
+
+  return 20000;
+}
+
 async function startExotelFlowCall(lead) {
   const accountSid = requireEnvironmentVariable(
     "EXOTEL_ACCOUNT_SID"
@@ -120,18 +139,22 @@ async function startExotelFlowCall(lead) {
     `/v1/Accounts/${encodeURIComponent(
       accountSid
     )}/Calls/connect.json`;
-
   const flowUrl =
     `http://my.exotel.com/${accountSid}` +
     `/exoml/start_voice/${flowId}`;
-
   const statusCallbackUrl = new URL(
     `${publicBackendUrl}/api/webhooks/exotel/status`
   );
 
-  // This query value lets the callback identify the lead even when
-  // Exotel's immediate response does not contain a readable Call SID.
   statusCallbackUrl.searchParams.set("leadId", String(lead._id));
+
+  const webhookSecret = String(
+    process.env.EXOTEL_WEBHOOK_SECRET || ""
+  ).trim();
+
+  if (webhookSecret) {
+    statusCallbackUrl.searchParams.set("token", webhookSecret);
+  }
 
   const requestBody = new URLSearchParams();
   requestBody.set("From", normalizeIndianPhone(lead.phone));
@@ -146,23 +169,39 @@ async function startExotelFlowCall(lead) {
   );
   requestBody.set("CustomField", String(lead._id));
 
-  // StatusCallbackEvents is intentionally omitted. Some Exotel trial
-  // accounts reject it for Connect-to-Flow calls, while StatusCallback
-  // still sends the terminal call result.
-
   const encodedCredentials = Buffer.from(
     `${apiKey}:${apiToken}`
   ).toString("base64");
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    getRequestTimeout()
+  );
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${encodedCredentials}`,
-      Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: requestBody,
-  });
+  let response;
+
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${encodedCredentials}`,
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: requestBody,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Exotel request timed out");
+    }
+
+    throw new Error(
+      `Unable to connect to Exotel: ${error.message}`
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const rawBody = await response.text();
   const { data, call } = parseExotelResponse(rawBody);
@@ -179,13 +218,12 @@ async function startExotelFlowCall(lead) {
     call?.CallSid ||
     call?.callSid ||
     null;
-
   const providerStatus =
     call?.Status || call?.status || "accepted";
 
   if (!providerCallId) {
     console.warn(
-      "Exotel accepted the call without a readable immediate Call SID",
+      "Exotel accepted the call without an immediate Call SID",
       {
         statusCode: response.status,
         contentType: response.headers.get("content-type"),

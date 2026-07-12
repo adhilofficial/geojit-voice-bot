@@ -15,7 +15,7 @@ function getAllowedOrigins() {
     process.env.CLIENT_URL || "http://localhost:5173"
   )
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 
   return new Set(configuredOrigins);
@@ -23,22 +23,38 @@ function getAllowedOrigins() {
 
 const allowedOrigins = getAllowedOrigins();
 
+app.disable("x-powered-by");
 app.use(helmet());
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) {
+      const normalizedOrigin = origin?.replace(/\/+$/, "");
+
+      if (!origin || allowedOrigins.has(normalizedOrigin)) {
         callback(null, true);
         return;
       }
 
       callback(new Error("Origin is not allowed by CORS"));
     },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(morgan("dev"));
+app.use(express.json({ limit: "1mb" }));
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "1mb",
+  })
+);
+app.use(
+  morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
+    skip(req) {
+      return req.path === "/api/webhooks/exotel/status";
+    },
+  })
+);
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -61,7 +77,8 @@ app.get("/api/health", (req, res) => {
         process.env.EXOTEL_API_TOKEN &&
         process.env.EXOTEL_SUBDOMAIN &&
         process.env.EXOTEL_CALLER_ID &&
-        process.env.EXOTEL_FLOW_ID
+        process.env.EXOTEL_FLOW_ID &&
+        process.env.PUBLIC_BACKEND_URL
     ),
   });
 });
@@ -78,7 +95,7 @@ app.use((req, res) => {
   });
 });
 
-app.use((error, req, res, next) => {
+app.use((error, req, res, _next) => {
   console.error("Application error:", error);
 
   if (error.message === "Only CSV files are allowed") {

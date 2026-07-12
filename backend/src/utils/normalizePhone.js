@@ -3,7 +3,7 @@ function normalizePhone(phone) {
     return null;
   }
 
-  let digits = String(phone).replace(/\D/g, "");
+  const digits = String(phone).replace(/\D/g, "");
 
   // Indian number without country code
   if (digits.length === 10) {

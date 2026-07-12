@@ -1,23 +1,55 @@
-﻿const rawApiBaseUrl =
+const rawApiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:5000/api";
 
 const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, "");
+const DEFAULT_TIMEOUT_MS = 30000;
 
-async function handleResponse(response) {
-  let data = {};
+async function request(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    DEFAULT_TIMEOUT_MS
+  );
 
   try {
-    data = await response.json();
-  } catch {
-    data = {};
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("The server took too long to respond");
+    }
+
+    throw new Error(
+      error.message || "Unable to connect to the server"
+    );
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function handleResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  let data = {};
+
+  if (contentType.includes("application/json")) {
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+  } else {
+    const text = await response.text();
+    data = text ? { message: text } : {};
   }
 
   if (!response.ok) {
     throw new Error(
       data.message ||
         data.error ||
-        "Something went wrong"
+        `Request failed with status ${response.status}`
     );
   }
 
@@ -33,13 +65,12 @@ export async function getLeads(params = {}) {
       value !== null &&
       value !== ""
     ) {
-      searchParams.set(key, value);
+      searchParams.set(key, String(value));
     }
   });
 
   const query = searchParams.toString();
-
-  const response = await fetch(
+  const response = await request(
     `${API_BASE_URL}/leads${query ? `?${query}` : ""}`
   );
 
@@ -47,13 +78,11 @@ export async function getLeads(params = {}) {
 }
 
 export async function createLead(payload) {
-  const response = await fetch(`${API_BASE_URL}/leads`, {
+  const response = await request(`${API_BASE_URL}/leads`, {
     method: "POST",
-
     headers: {
       "Content-Type": "application/json",
     },
-
     body: JSON.stringify(payload),
   });
 
@@ -62,14 +91,13 @@ export async function createLead(payload) {
 
 export async function uploadLeadCsv(file, batchName) {
   const formData = new FormData();
-
   formData.append("file", file);
 
   if (batchName) {
     formData.append("batchName", batchName);
   }
 
-  const response = await fetch(
+  const response = await request(
     `${API_BASE_URL}/leads/upload`,
     {
       method: "POST",
@@ -80,9 +108,11 @@ export async function uploadLeadCsv(file, batchName) {
   return handleResponse(response);
 }
 
-export async function startMockCall(leadId) {
-  const response = await fetch(
-    `${API_BASE_URL}/calls/${leadId}/start`,
+export async function startLiveCall(leadId) {
+  const response = await request(
+    `${API_BASE_URL}/live-calls/${encodeURIComponent(
+      leadId
+    )}/start`,
     {
       method: "POST",
     }
@@ -91,9 +121,11 @@ export async function startMockCall(leadId) {
   return handleResponse(response);
 }
 
-export async function startLiveCall(leadId) {
-  const response = await fetch(
-    `${API_BASE_URL}/live-calls/${leadId}/start`,
+export async function startMockCall(leadId) {
+  const response = await request(
+    `${API_BASE_URL}/calls/${encodeURIComponent(
+      leadId
+    )}/start`,
     {
       method: "POST",
     }
@@ -103,18 +135,16 @@ export async function startLiveCall(leadId) {
 }
 
 export async function submitMockDigit(leadId, digit) {
-  const response = await fetch(
-    `${API_BASE_URL}/calls/${leadId}/digit`,
+  const response = await request(
+    `${API_BASE_URL}/calls/${encodeURIComponent(
+      leadId
+    )}/digit`,
     {
       method: "POST",
-
       headers: {
         "Content-Type": "application/json",
       },
-
-      body: JSON.stringify({
-        digit: String(digit),
-      }),
+      body: JSON.stringify({ digit: String(digit) }),
     }
   );
 
@@ -122,8 +152,10 @@ export async function submitMockDigit(leadId, digit) {
 }
 
 export async function endMockCall(leadId) {
-  const response = await fetch(
-    `${API_BASE_URL}/calls/${leadId}/end`,
+  const response = await request(
+    `${API_BASE_URL}/calls/${encodeURIComponent(
+      leadId
+    )}/end`,
     {
       method: "POST",
     }
@@ -133,19 +165,18 @@ export async function endMockCall(leadId) {
 }
 
 export async function downloadInterestedCsv() {
-  const response = await fetch(
+  const response = await request(
     `${API_BASE_URL}/leads/export/interested`
   );
 
   if (!response.ok) {
-    let message =
-      "Unable to export interested customers";
+    let message = "Unable to export interested customers";
 
     try {
       const data = await response.json();
       message = data.message || message;
     } catch {
-      // Keep default error message.
+      // Keep the default message.
     }
 
     throw new Error(message);
@@ -153,26 +184,19 @@ export async function downloadInterestedCsv() {
 
   const blob = await response.blob();
   const downloadUrl = URL.createObjectURL(blob);
-
-  const date = new Date()
-    .toISOString()
-    .slice(0, 10);
-
+  const date = new Date().toISOString().slice(0, 10);
   const link = document.createElement("a");
 
   link.href = downloadUrl;
-  link.download =
-    `geojit-interested-customers-${date}.csv`;
+  link.download = `geojit-interested-customers-${date}.csv`;
 
   document.body.appendChild(link);
   link.click();
   link.remove();
-
   URL.revokeObjectURL(downloadUrl);
 }
 
 export async function checkBackendHealth() {
-  const response = await fetch(`${API_BASE_URL}/health`);
-
+  const response = await request(`${API_BASE_URL}/health`);
   return handleResponse(response);
 }

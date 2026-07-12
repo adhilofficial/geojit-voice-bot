@@ -4,6 +4,33 @@ const csv = require("csv-parser");
 const Lead = require("../models/Lead");
 const normalizePhone = require("../utils/normalizePhone");
 
+const allowedStatuses = new Set([
+  "pending",
+  "calling",
+  "answered",
+  "completed",
+  "no_answer",
+  "busy",
+  "failed",
+  "opted_out",
+]);
+
+const allowedServices = new Set([
+  "mutual_fund",
+  "sip",
+  "trading_account",
+  "callback",
+  "not_interested",
+]);
+
+const exportServiceLabels = {
+  mutual_fund: "Mutual Fund",
+  sip: "SIP",
+  trading_account: "Trading Account",
+  callback: "Callback Request",
+  not_interested: "Not Interested",
+};
+
 function normalizeCsvRow(row) {
   const normalized = {};
 
@@ -15,10 +42,32 @@ function normalizeCsvRow(row) {
   return normalized;
 }
 
+function cleanText(value, fallback = "") {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function removeUploadedFile(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn("Unable to delete uploaded CSV:", error.message);
+    }
+  }
+}
+
 async function createLead(req, res) {
   try {
     const { name, phone, batchName } = req.body;
-
     const normalizedPhone = normalizePhone(phone);
 
     if (!normalizedPhone) {
@@ -41,23 +90,30 @@ async function createLead(req, res) {
     }
 
     const lead = await Lead.create({
-      name: name?.trim() || "Unknown Customer",
+      name: cleanText(name, "Unknown Customer"),
       phone: normalizedPhone,
-      batchName: batchName?.trim() || "Manual Entry",
+      batchName: cleanText(batchName, "Manual Entry"),
       source: "manual",
     });
 
     return res.status(201).json({
       success: true,
-      message: "Lead added successfully",
+      message: "Customer added successfully",
       lead,
     });
   } catch (error) {
     console.error("Create lead error:", error);
 
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "This phone number already exists",
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      message: "Unable to add lead",
+      message: "Unable to add customer",
       error: error.message,
     });
   }
@@ -73,6 +129,30 @@ async function getLeads(req, res) {
       page = 1,
       limit = 20,
     } = req.query;
+
+    if (status && !allowedStatuses.has(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid call status filter",
+      });
+    }
+
+    if (service && !allowedServices.has(service)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid service filter",
+      });
+    }
+
+    if (
+      callbackRequested !== undefined &&
+      !["true", "false"].includes(callbackRequested)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "callbackRequested must be true or false",
+      });
+    }
 
     const filter = {};
 
@@ -92,17 +172,27 @@ async function getLeads(req, res) {
       filter.callbackRequested = false;
     }
 
-    if (search) {
+    const normalizedSearch = cleanText(search);
+
+    if (normalizedSearch) {
+      const safeSearch = escapeRegex(normalizedSearch);
+
       filter.$or = [
         {
           name: {
-            $regex: search,
+            $regex: safeSearch,
             $options: "i",
           },
         },
         {
           phone: {
-            $regex: search,
+            $regex: safeSearch,
+            $options: "i",
+          },
+        },
+        {
+          batchName: {
+            $regex: safeSearch,
             $options: "i",
           },
         },
@@ -114,15 +204,14 @@ async function getLeads(req, res) {
       Math.max(Number(limit) || 20, 1),
       100
     );
-
     const skip = (pageNumber - 1) * pageLimit;
 
     const [leads, total] = await Promise.all([
       Lead.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(pageLimit),
-
+        .limit(pageLimit)
+        .lean(),
       Lead.countDocuments(filter),
     ]);
 
@@ -138,14 +227,14 @@ async function getLeads(req, res) {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to retrieve leads",
+      message: "Unable to retrieve customers",
       error: error.message,
     });
   }
 }
 
 async function uploadLeads(req, res) {
-  let uploadedFilePath;
+  const uploadedFilePath = req.file?.path;
 
   try {
     if (!req.file) {
@@ -155,15 +244,15 @@ async function uploadLeads(req, res) {
       });
     }
 
-    uploadedFilePath = req.file.path;
-
     const rows = [];
 
     await new Promise((resolve, reject) => {
       fs.createReadStream(uploadedFilePath)
         .pipe(csv())
         .on("data", (row) => {
-          rows.push(row);
+          if (rows.length < 10000) {
+            rows.push(row);
+          }
         })
         .on("end", resolve)
         .on("error", reject);
@@ -181,27 +270,23 @@ async function uploadLeads(req, res) {
 
     rows.forEach((rawRow, index) => {
       const row = normalizeCsvRow(rawRow);
-
       const phone =
         row.phone ||
         row.mobile ||
         row.number ||
         row["phone number"] ||
         row["mobile number"];
-
       const name =
         row.name ||
         row.customer ||
         row["customer name"] ||
         "Unknown Customer";
-
       const batchName =
         row.batchname ||
         row.batch ||
         row["batch name"] ||
         req.body.batchName ||
         "CSV Upload";
-
       const normalizedPhone = normalizePhone(phone);
 
       if (!normalizedPhone) {
@@ -210,19 +295,16 @@ async function uploadLeads(req, res) {
           reason: "Invalid phone number",
           phone: phone || null,
         });
-
         return;
       }
 
       validLeads.push({
-        name: String(name).trim() || "Unknown Customer",
+        name: cleanText(name, "Unknown Customer"),
         phone: normalizedPhone,
-        batchName:
-          String(batchName).trim() || "CSV Upload",
+        batchName: cleanText(batchName, "CSV Upload"),
       });
     });
 
-    // Remove duplicate phone numbers inside the CSV itself
     const uniqueLeadMap = new Map();
 
     for (const lead of validLeads) {
@@ -246,7 +328,6 @@ async function uploadLeads(req, res) {
         filter: {
           phone: lead.phone,
         },
-
         update: {
           $setOnInsert: {
             ...lead,
@@ -254,7 +335,6 @@ async function uploadLeads(req, res) {
             callStatus: "pending",
           },
         },
-
         upsert: true,
       },
     }));
@@ -290,28 +370,25 @@ async function uploadLeads(req, res) {
       error: error.message,
     });
   } finally {
-    if (
-      uploadedFilePath &&
-      fs.existsSync(uploadedFilePath)
-    ) {
-      fs.unlinkSync(uploadedFilePath);
-    }
+    await removeUploadedFile(uploadedFilePath);
   }
 }
-const exportServiceLabels = {
-  mutual_fund: "Mutual Fund",
-  sip: "SIP",
-  trading_account: "Trading Account",
-  callback: "Callback Request",
-  not_interested: "Not Interested",
-};
 
-function escapeCsvValue(value) {
-  if (value === null || value === undefined) {
-    return '""';
+function sanitizeSpreadsheetValue(value) {
+  const stringValue = String(value ?? "");
+
+  if (/^[=+\-@\t\r]/.test(stringValue)) {
+    return `'${stringValue}`;
   }
 
-  const stringValue = String(value).replace(/"/g, '""');
+  return stringValue;
+}
+
+function escapeCsvValue(value) {
+  const stringValue = sanitizeSpreadsheetValue(value).replace(
+    /"/g,
+    '""'
+  );
 
   return `"${stringValue}"`;
 }
@@ -338,7 +415,6 @@ async function exportInterestedLeads(req, res) {
       optedOut: {
         $ne: true,
       },
-
       $or: [
         {
           callbackRequested: true,
@@ -390,34 +466,23 @@ async function exportInterestedLeads(req, res) {
     ]);
 
     const csvContent = [headers, ...rows]
-      .map((row) =>
-        row.map(escapeCsvValue).join(",")
-      )
+      .map((row) => row.map(escapeCsvValue).join(","))
       .join("\r\n");
+    const date = new Date().toISOString().slice(0, 10);
 
-    const date = new Date()
-      .toISOString()
-      .slice(0, 10);
-
-    res.setHeader(
-      "Content-Type",
-      "text/csv; charset=utf-8"
-    );
-
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="geojit-interested-customers-${date}.csv"`
     );
 
-    // BOM helps Microsoft Excel display the file properly.
     return res.status(200).send(`\uFEFF${csvContent}`);
   } catch (error) {
     console.error("Export interested leads error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Unable to export interested customers",
+      message: "Unable to export interested customers",
       error: error.message,
     });
   }

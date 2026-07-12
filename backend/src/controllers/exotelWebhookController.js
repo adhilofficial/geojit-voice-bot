@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const Lead = require("../models/Lead");
 
 const statusMap = {
@@ -38,6 +40,32 @@ function getPayloadValue(payload, names) {
   return null;
 }
 
+function secureEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isWebhookAuthorized(req) {
+  const expectedSecret = String(
+    process.env.EXOTEL_WEBHOOK_SECRET || ""
+  ).trim();
+
+  if (!expectedSecret) {
+    return true;
+  }
+
+  const providedSecret =
+    req.query.token || req.get("x-exotel-webhook-secret") || "";
+
+  return secureEquals(providedSecret, expectedSecret);
+}
+
 async function findLeadForCallback({
   leadId,
   customField,
@@ -69,14 +97,18 @@ async function findLeadForCallback({
 }
 
 async function handleExotelStatus(req, res) {
+  if (!isWebhookAuthorized(req)) {
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized webhook request",
+    });
+  }
+
   try {
     const payload = {
       ...req.query,
       ...req.body,
     };
-
-    console.log("Exotel status webhook:", payload);
-
     const leadId = getPayloadValue(payload, [
       "leadId",
       "LeadId",
@@ -86,6 +118,8 @@ async function handleExotelStatus(req, res) {
       "CallSid",
       "callSid",
       "callsid",
+      "Sid",
+      "sid",
     ]);
     const customField = getPayloadValue(payload, [
       "CustomField",
@@ -95,10 +129,19 @@ async function handleExotelStatus(req, res) {
     const rawStatus = getPayloadValue(payload, [
       "Status",
       "status",
+      "CallStatus",
+      "callStatus",
+      "DialCallStatus",
     ]);
     const providerStatus = String(rawStatus || "")
       .trim()
       .toLowerCase();
+
+    console.log("Exotel status callback received", {
+      leadId,
+      callSid,
+      providerStatus,
+    });
 
     const lead = await findLeadForCallback({
       leadId,
@@ -107,7 +150,7 @@ async function handleExotelStatus(req, res) {
     });
 
     if (!lead) {
-      console.warn("No lead found for Exotel webhook", {
+      console.warn("No customer found for Exotel callback", {
         leadId,
         callSid,
         customField,
@@ -139,11 +182,15 @@ async function handleExotelStatus(req, res) {
       "ConversationDuration",
       "Duration",
       "duration",
+      "DialCallDuration",
     ]);
-    const duration = Number(durationValue || 0);
 
-    if (Number.isFinite(duration) && duration >= 0) {
-      lead.callDuration = duration;
+    if (durationValue !== null) {
+      const duration = Number(durationValue);
+
+      if (Number.isFinite(duration) && duration >= 0) {
+        lead.callDuration = duration;
+      }
     }
 
     const recordingUrl = getPayloadValue(payload, [
@@ -172,8 +219,6 @@ async function handleExotelStatus(req, res) {
   } catch (error) {
     console.error("Exotel webhook processing error:", error);
 
-    // Acknowledge the callback so Exotel does not keep retrying while
-    // the application records the error in its own logs.
     return res.status(200).json({
       success: false,
       message: "Webhook acknowledged but processing failed",

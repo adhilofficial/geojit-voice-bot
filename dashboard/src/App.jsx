@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -35,6 +35,7 @@ import {
   downloadInterestedCsv,
   endMockCall,
   getLeads,
+  startLiveCall,
   startMockCall,
   submitMockDigit,
   uploadLeadCsv,
@@ -388,24 +389,34 @@ function App() {
     }
   }, []);
 
-  const loadLeads = useCallback(async () => {
-    try {
-      setLoading(true);
+  const loadLeads = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        if (!silent) {
+          setLoading(true);
+        }
 
-      const response = await getLeads({ limit: 100 });
+        const response = await getLeads({ limit: 100 });
 
-      setLeads(response.leads || []);
-      setBackendConnected(true);
-    } catch (error) {
-      setBackendConnected(false);
-      showMessage(
-        "error",
-        error.message || "Unable to load customers"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [showMessage]);
+        setLeads(response.leads || []);
+        setBackendConnected(true);
+      } catch (error) {
+        setBackendConnected(false);
+
+        if (!silent) {
+          showMessage(
+            "error",
+            error.message || "Unable to load customers"
+          );
+        }
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [showMessage]
+  );
 
   useEffect(() => {
     loadLeads();
@@ -430,6 +441,26 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const hasActiveLiveCall =
+      !campaignActive &&
+      leads.some((lead) =>
+        ["calling", "answered"].includes(lead.callStatus)
+      );
+
+    if (!hasActiveLiveCall) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadLeads({ silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [campaignActive, leads, loadLeads]);
 
   const filteredLeads = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -665,7 +696,7 @@ function App() {
     }
   }
 
-  async function handleStartMockCall(lead) {
+  async function handleStartLiveCall(lead) {
     if (!backendConnected) {
       showMessage("error", "Backend is disconnected");
       return;
@@ -684,19 +715,51 @@ function App() {
       return;
     }
 
+    const activeStatus = ["calling", "answered"].includes(
+      lead.callStatus
+    );
+
+    const optedOut =
+      lead.optedOut === true ||
+      lead.callStatus === "opted_out";
+
+    if (optedOut) {
+      showMessage(
+        "error",
+        "This customer has opted out of calls"
+      );
+      return;
+    }
+
+    if (activeStatus) {
+      showMessage(
+        "error",
+        "A call is already active for this customer"
+      );
+      return;
+    }
+
     try {
       setCallLoading(true);
-      await openCallForLead(lead);
+
+      const response = await startLiveCall(lead._id);
+
       showMessage(
         "success",
-        `Mock call started for ${lead.name || "customer"}`
+        response.message ||
+          `Live Exotel call started for ${
+            lead.name || "customer"
+          }`
       );
-      await loadLeads();
+
+      await loadLeads({ silent: true });
     } catch (error) {
       showMessage(
         "error",
-        error.message || "Unable to start mock call"
+        error.message || "Unable to start Exotel call"
       );
+
+      await loadLeads({ silent: true });
     } finally {
       setCallLoading(false);
     }
@@ -950,7 +1013,7 @@ function App() {
     onSearchChange: setSearch,
     statusFilter,
     onStatusChange: setStatusFilter,
-    onStartCall: handleStartMockCall,
+    onStartCall: handleStartLiveCall,
     callLoading,
     campaignActive,
     backendConnected,
@@ -1020,8 +1083,8 @@ function App() {
               {checkingBackend
                 ? "Checking..."
                 : backendConnected
-                  ? "Backend online"
-                  : "Backend offline"}
+                  ? "online"
+                  : "offline"}
             </div>
 
             <button

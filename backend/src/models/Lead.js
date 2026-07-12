@@ -6,17 +6,14 @@ const answerSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-
     service: {
       type: String,
       default: null,
     },
-
     existingCustomer: {
       type: String,
       default: null,
     },
-
     callback: {
       type: String,
       default: null,
@@ -34,7 +31,6 @@ const leadSchema = new mongoose.Schema(
       trim: true,
       default: "Unknown Customer",
     },
-
     phone: {
       type: String,
       required: [true, "Phone number is required"],
@@ -42,19 +38,16 @@ const leadSchema = new mongoose.Schema(
       index: true,
       trim: true,
     },
-
     batchName: {
       type: String,
       trim: true,
       default: "Manual Entry",
     },
-
     source: {
       type: String,
       enum: ["manual", "csv"],
       default: "manual",
     },
-
     callStatus: {
       type: String,
       enum: [
@@ -70,19 +63,18 @@ const leadSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
-
     callStep: {
-  type: String,
-  enum: [
-    "not_started",
-    "consent",
-    "service",
-    "existing_customer",
-    "callback",
-    "completed",
-  ],
-  default: "not_started",
-},
+      type: String,
+      enum: [
+        "not_started",
+        "consent",
+        "service",
+        "existing_customer",
+        "callback",
+        "completed",
+      ],
+      default: "not_started",
+    },
     selectedService: {
       type: String,
       enum: [
@@ -95,55 +87,45 @@ const leadSchema = new mongoose.Schema(
       ],
       default: null,
     },
-
     callbackRequested: {
       type: Boolean,
       default: false,
     },
-
     optedOut: {
       type: Boolean,
       default: false,
     },
-
     answers: {
       type: answerSchema,
       default: () => ({}),
     },
-
     callAttempts: {
       type: Number,
       default: 0,
       min: 0,
     },
-
     providerCallId: {
       type: String,
       default: null,
       index: true,
     },
-
     providerStatus: {
       type: String,
       default: null,
     },
-
     callDuration: {
       type: Number,
       default: 0,
       min: 0,
     },
-
     recordingUrl: {
       type: String,
       default: null,
     },
-
     lastCallError: {
       type: String,
       default: null,
     },
-
     lastCalledAt: {
       type: Date,
       default: null,

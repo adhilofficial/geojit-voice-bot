@@ -89,7 +89,7 @@ async function startExotelFlowCall(lead) {
 
   const endpoint =
     `https://${subdomain}` +
-    `/v1/Accounts/${accountSid}/Calls/connect`;
+    `/v1/Accounts/${accountSid}/Calls/connect.json`;
 
   const flowUrl =
     `http://my.exotel.com/${accountSid}` +
@@ -118,17 +118,74 @@ requestBody.set("CustomField", String(lead._id));
   ).toString("base64");
 
   const response = await fetch(endpoint, {
-    method: "POST",
+  method: "POST",
 
-    headers: {
-      Authorization: `Basic ${encodedCredentials}`,
-      Accept: "application/json",
-      "Content-Type":
-        "application/x-www-form-urlencoded",
-    },
+  headers: {
+    Authorization: `Basic ${encodedCredentials}`,
+    Accept: "application/json",
 
-    body: requestBody,
+    "Content-Type":
+      "application/x-www-form-urlencoded",
+  },
+
+  body: requestBody,
+});
+
+const rawBody = await response.text();
+
+let data = {};
+
+try {
+  data = rawBody ? JSON.parse(rawBody) : {};
+} catch {
+  data = {
+    raw: rawBody,
+  };
+}
+
+if (!response.ok) {
+  const xmlMessage = String(rawBody).match(
+    /<Message>([\s\S]*?)<\/Message>/i
+  );
+
+  const providerMessage =
+    data?.RestException?.Message ||
+    data?.message ||
+    xmlMessage?.[1]?.trim() ||
+    `Exotel returned HTTP ${response.status}`;
+
+  throw new Error(providerMessage);
+}
+
+const call = data?.Call || data?.call;
+
+const providerCallId =
+  call?.Sid ||
+  call?.sid ||
+  null;
+
+if (!providerCallId) {
+  console.error("Unexpected Exotel response:", {
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    response: data,
   });
+
+  throw new Error(
+    "Exotel returned a successful response without a call ID"
+  );
+}
+
+return {
+  providerCallId,
+
+  providerStatus:
+    call.Status ||
+    call.status ||
+    "in-progress",
+
+  raw: data,
+};
 
   const rawBody = await response.text();
   const data = parseResponseBody(rawBody);

@@ -26,6 +26,44 @@ const terminalStatuses = new Set([
   "cancelled",
 ]);
 
+const digitActions = {
+  1: {
+    selectedService: "mutual_fund",
+    callbackRequested: false,
+    optedOut: false,
+    callStatus: "completed",
+    message: "Mutual Fund interest recorded",
+  },
+  2: {
+    selectedService: "sip",
+    callbackRequested: false,
+    optedOut: false,
+    callStatus: "completed",
+    message: "SIP interest recorded",
+  },
+  3: {
+    selectedService: "trading_account",
+    callbackRequested: false,
+    optedOut: false,
+    callStatus: "completed",
+    message: "Trading Account interest recorded",
+  },
+  4: {
+    selectedService: "callback",
+    callbackRequested: true,
+    optedOut: false,
+    callStatus: "completed",
+    message: "Callback request recorded",
+  },
+  9: {
+    selectedService: "not_interested",
+    callbackRequested: false,
+    optedOut: true,
+    callStatus: "opted_out",
+    message: "Opt-out preference recorded",
+  },
+};
+
 function getPayloadValue(payload, names) {
   for (const name of names) {
     if (
@@ -66,6 +104,13 @@ function isWebhookAuthorized(req) {
   return secureEquals(providedSecret, expectedSecret);
 }
 
+function normalizeDigit(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .trim();
+}
+
 async function findLeadForCallback({
   leadId,
   customField,
@@ -96,6 +141,28 @@ async function findLeadForCallback({
   return null;
 }
 
+function getCallbackIdentity(payload) {
+  return {
+    leadId: getPayloadValue(payload, [
+      "leadId",
+      "LeadId",
+      "lead_id",
+    ]),
+    callSid: getPayloadValue(payload, [
+      "CallSid",
+      "callSid",
+      "callsid",
+      "Sid",
+      "sid",
+    ]),
+    customField: getPayloadValue(payload, [
+      "CustomField",
+      "customField",
+      "customfield",
+    ]),
+  };
+}
+
 async function handleExotelStatus(req, res) {
   if (!isWebhookAuthorized(req)) {
     return res.status(401).json({
@@ -109,23 +176,8 @@ async function handleExotelStatus(req, res) {
       ...req.query,
       ...req.body,
     };
-    const leadId = getPayloadValue(payload, [
-      "leadId",
-      "LeadId",
-      "lead_id",
-    ]);
-    const callSid = getPayloadValue(payload, [
-      "CallSid",
-      "callSid",
-      "callsid",
-      "Sid",
-      "sid",
-    ]);
-    const customField = getPayloadValue(payload, [
-      "CustomField",
-      "customField",
-      "customfield",
-    ]);
+    const { leadId, callSid, customField } =
+      getCallbackIdentity(payload);
     const rawStatus = getPayloadValue(payload, [
       "Status",
       "status",
@@ -170,7 +222,12 @@ async function handleExotelStatus(req, res) {
       lead.providerStatus = providerStatus;
     }
 
-    if (statusMap[providerStatus]) {
+    // Preserve an explicit opt-out recorded by the IVR digit webhook.
+    if (
+      !lead.optedOut &&
+      lead.callStatus !== "opted_out" &&
+      statusMap[providerStatus]
+    ) {
       lead.callStatus = statusMap[providerStatus];
     }
 
@@ -226,6 +283,102 @@ async function handleExotelStatus(req, res) {
   }
 }
 
+async function handleExotelDigit(req, res) {
+  if (!isWebhookAuthorized(req)) {
+    return res.status(401).type("text/plain").send("Unauthorized");
+  }
+
+  try {
+    const payload = {
+      ...req.query,
+      ...req.body,
+    };
+    const { leadId, callSid, customField } =
+      getCallbackIdentity(payload);
+    const digit = normalizeDigit(
+      getPayloadValue(payload, [
+        "Digits",
+        "digits",
+        "Digit",
+        "digit",
+      ])
+    );
+    const action = digitActions[digit];
+
+    console.log("Exotel IVR digit callback received", {
+      leadId,
+      callSid,
+      customField,
+      digit,
+    });
+
+    if (!action) {
+      console.warn("Unsupported Exotel IVR digit", {
+        leadId,
+        callSid,
+        digit,
+      });
+
+      // Passthru should continue the call flow even for an unexpected digit.
+      return res.status(200).type("text/plain").send("OK");
+    }
+
+    const lead = await findLeadForCallback({
+      leadId,
+      customField,
+      callSid,
+    });
+
+    if (!lead) {
+      console.warn("No customer found for Exotel digit callback", {
+        leadId,
+        callSid,
+        customField,
+        digit,
+      });
+
+      return res.status(200).type("text/plain").send("OK");
+    }
+
+    if (callSid) {
+      lead.providerCallId = String(callSid);
+    }
+
+    lead.selectedService = action.selectedService;
+    lead.callbackRequested = action.callbackRequested;
+    lead.optedOut = action.optedOut;
+    lead.callStatus = action.callStatus;
+    lead.callStep = "completed";
+    lead.lastCallError = null;
+
+    lead.answers = {
+      consent: action.optedOut ? "opted_out" : "yes",
+      service: action.selectedService,
+      existingCustomer:
+        lead.answers?.existingCustomer || null,
+      callback: action.callbackRequested ? "yes" : "no",
+    };
+
+    await lead.save();
+
+    console.log("Exotel IVR response saved", {
+      leadId: String(lead._id),
+      digit,
+      selectedService: lead.selectedService,
+      callbackRequested: lead.callbackRequested,
+      optedOut: lead.optedOut,
+    });
+
+    return res.status(200).type("text/plain").send("OK");
+  } catch (error) {
+    console.error("Exotel digit webhook processing error:", error);
+
+    // Acknowledge quickly so the live call can continue.
+    return res.status(200).type("text/plain").send("OK");
+  }
+}
+
 module.exports = {
   handleExotelStatus,
+  handleExotelDigit,
 };

@@ -1,4 +1,8 @@
 const Lead = require("../models/Lead");
+const {
+  POSITIVE_IVR_SERVICES,
+  applyRecordedIvrOutcome,
+} = require("./callOutcome");
 
 const ACTIVE_CALL_STATUSES = ["calling", "answered"];
 const DEFAULT_STALE_CALL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -51,6 +55,12 @@ function applyStaleCallState(lead) {
 }
 
 async function resetLeadIfStale(lead) {
+  // Recover a customer response before considering the call stale.
+  if (applyRecordedIvrOutcome(lead)) {
+    await lead.save();
+    return true;
+  }
+
   if (!isLeadCallStale(lead)) {
     return false;
   }
@@ -63,31 +73,57 @@ async function resetLeadIfStale(lead) {
 
 async function resetAllStaleCalls() {
   const cutoff = new Date(Date.now() - getStaleCallTimeoutMs());
+  const positiveServices = Array.from(POSITIVE_IVR_SERVICES);
 
-  const result = await Lead.updateMany(
+  const optedOutResult = await Lead.updateMany(
     {
-      callStatus: {
-        $in: ACTIVE_CALL_STATUSES,
+      callStatus: { $in: ACTIVE_CALL_STATUSES },
+      $or: [
+        { optedOut: true },
+        { selectedService: "not_interested" },
+      ],
+    },
+    {
+      $set: {
+        callStatus: "opted_out",
+        callStep: "completed",
+        optedOut: true,
+        lastCallError: null,
+      },
+    }
+  );
+
+  const completedResult = await Lead.updateMany(
+    {
+      callStatus: { $in: ACTIVE_CALL_STATUSES },
+      optedOut: { $ne: true },
+      selectedService: { $in: positiveServices },
+    },
+    {
+      $set: {
+        callStatus: "completed",
+        callStep: "completed",
+        lastCallError: null,
+      },
+    }
+  );
+
+  const staleResult = await Lead.updateMany(
+    {
+      callStatus: { $in: ACTIVE_CALL_STATUSES },
+      optedOut: { $ne: true },
+      selectedService: {
+        $nin: [...positiveServices, "not_interested"],
       },
       $or: [
-        {
-          lastCalledAt: {
-            $lte: cutoff,
-          },
-        },
+        { lastCalledAt: { $lte: cutoff } },
         {
           lastCalledAt: null,
-          updatedAt: {
-            $lte: cutoff,
-          },
+          updatedAt: { $lte: cutoff },
         },
         {
-          lastCalledAt: {
-            $exists: false,
-          },
-          updatedAt: {
-            $lte: cutoff,
-          },
+          lastCalledAt: { $exists: false },
+          updatedAt: { $lte: cutoff },
         },
       ],
     },
@@ -102,7 +138,11 @@ async function resetAllStaleCalls() {
     }
   );
 
-  return result.modifiedCount || 0;
+  return (
+    (optedOutResult.modifiedCount || 0) +
+    (completedResult.modifiedCount || 0) +
+    (staleResult.modifiedCount || 0)
+  );
 }
 
 module.exports = {

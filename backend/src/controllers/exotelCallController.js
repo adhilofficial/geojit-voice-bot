@@ -6,6 +6,9 @@ const {
 const {
   resetLeadIfStale,
 } = require("../utils/staleCallRecovery");
+const {
+  applyRecordedIvrOutcome,
+} = require("../utils/callOutcome");
 
 async function startLiveCall(req, res) {
   try {
@@ -178,11 +181,23 @@ async function syncLiveCall(req, res) {
     lead.providerCallId = details.providerCallId;
     lead.providerStatus = providerStatus;
 
-    if (providerStatusMap[providerStatus]) {
+    // Do not overwrite a successfully captured IVR selection with a
+    // later provider-level failure. The provider status is still stored
+    // separately in providerStatus for diagnostics.
+    const preservedIvrOutcome =
+      applyRecordedIvrOutcome(lead);
+
+    if (
+      !preservedIvrOutcome &&
+      providerStatusMap[providerStatus]
+    ) {
       lead.callStatus = providerStatusMap[providerStatus];
     }
 
-    if (terminalProviderStatuses.has(providerStatus)) {
+    if (
+      preservedIvrOutcome ||
+      terminalProviderStatuses.has(providerStatus)
+    ) {
       lead.callStep = "completed";
     }
 
@@ -197,7 +212,10 @@ async function syncLiveCall(req, res) {
       lead.recordingUrl = details.recordingUrl;
     }
 
-    if (providerStatus === "completed") {
+    if (
+      preservedIvrOutcome ||
+      providerStatus === "completed"
+    ) {
       lead.lastCallError = null;
     } else if (terminalProviderStatuses.has(providerStatus)) {
       lead.lastCallError =

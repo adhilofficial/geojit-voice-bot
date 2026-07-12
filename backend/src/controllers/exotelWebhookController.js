@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 
 const Lead = require("../models/Lead");
+const {
+  applyRecordedIvrOutcome,
+} = require("../utils/callOutcome");
 
 const statusMap = {
   queued: "calling",
@@ -222,16 +225,23 @@ async function handleExotelStatus(req, res) {
       lead.providerStatus = providerStatus;
     }
 
-    // Preserve an explicit opt-out recorded by the IVR digit webhook.
+    // A recorded IVR digit is stronger evidence than a later provider
+    // failure status. Once a customer has selected a valid option, keep
+    // the business outcome as completed (or opted_out for digit 9).
+    const preservedIvrOutcome =
+      applyRecordedIvrOutcome(lead);
+
     if (
-      !lead.optedOut &&
-      lead.callStatus !== "opted_out" &&
+      !preservedIvrOutcome &&
       statusMap[providerStatus]
     ) {
       lead.callStatus = statusMap[providerStatus];
     }
 
-    if (terminalStatuses.has(providerStatus)) {
+    if (
+      preservedIvrOutcome ||
+      terminalStatuses.has(providerStatus)
+    ) {
       lead.callStep = "completed";
     }
 
@@ -260,7 +270,10 @@ async function handleExotelStatus(req, res) {
       lead.recordingUrl = String(recordingUrl);
     }
 
-    if (providerStatus === "completed") {
+    if (
+      preservedIvrOutcome ||
+      providerStatus === "completed"
+    ) {
       lead.lastCallError = null;
     } else if (terminalStatuses.has(providerStatus)) {
       lead.lastCallError =

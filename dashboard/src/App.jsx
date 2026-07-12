@@ -27,17 +27,12 @@ import {
   XCircle,
 } from "lucide-react";
 
-import MockCallModal from "./components/MockCallModal";
-
 import {
   checkBackendHealth,
   createLead,
   downloadInterestedCsv,
-  endMockCall,
   getLeads,
   startLiveCall,
-  startMockCall,
-  submitMockDigit,
   uploadLeadCsv,
 } from "./api";
 
@@ -68,6 +63,35 @@ const serviceLabels = {
   not_interested: "Not Interested",
 };
 
+const ACTIVE_CALL_STATUSES = new Set(["calling", "answered"]);
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "no_answer",
+  "busy",
+  "opted_out",
+]);
+
+const configuredCampaignLimit = Number(
+  import.meta.env.VITE_CAMPAIGN_MAX_CUSTOMERS
+);
+
+const CAMPAIGN_MAX_CUSTOMERS =
+  Number.isFinite(configuredCampaignLimit) &&
+  configuredCampaignLimit > 0
+    ? Math.floor(configuredCampaignLimit)
+    : 3;
+
+const CAMPAIGN_POLL_INTERVAL_MS = 5000;
+const CAMPAIGN_DELAY_SECONDS = 20;
+const CAMPAIGN_MAX_WAIT_MS = 6 * 60 * 1000;
+
+function wait(milliseconds) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
 function formatPhone(phone = "") {
   const value = String(phone);
 
@@ -93,19 +117,6 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
-}
-
-function isCallCompleted(call) {
-  if (!call) {
-    return false;
-  }
-
-  return (
-    call.callStep === "completed" ||
-    ["completed", "opted_out", "failed"].includes(
-      call.callStatus
-    )
-  );
 }
 
 function StatCard({ icon, label, value, tone = "green" }) {
@@ -331,6 +342,7 @@ function CustomerTable({
 
 function App() {
   const messageTimerRef = useRef(null);
+  const campaignRunIdRef = useRef(0);
 
   const [activeView, setActiveView] = useState("dashboard");
   const [entryPanel, setEntryPanel] = useState(null);
@@ -347,13 +359,15 @@ function App() {
   const [checkingBackend, setCheckingBackend] =
     useState(true);
 
-  const [activeCall, setActiveCall] = useState(null);
   const [callLoading, setCallLoading] = useState(false);
 
   const [campaignActive, setCampaignActive] =
     useState(false);
   const [campaignQueue, setCampaignQueue] = useState([]);
   const [campaignIndex, setCampaignIndex] = useState(-1);
+  const [campaignPhase, setCampaignPhase] = useState("idle");
+  const [campaignSecondsRemaining, setCampaignSecondsRemaining] =
+    useState(0);
 
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -436,6 +450,8 @@ function App() {
 
   useEffect(() => {
     return () => {
+      campaignRunIdRef.current += 1;
+
       if (messageTimerRef.current) {
         window.clearTimeout(messageTimerRef.current);
       }
@@ -516,39 +532,46 @@ function App() {
   const campaignPosition =
     campaignIndex >= 0 ? campaignIndex + 1 : 0;
 
-  const hasNextCampaignCustomer =
-    campaignActive &&
-    campaignIndex >= 0 &&
-    campaignIndex + 1 < campaignQueue.length;
+  const campaignCurrentCustomer =
+    campaignIndex >= 0 ? campaignQueue[campaignIndex] : null;
 
-  function createActiveCall(responseCall, lead) {
-    return {
-      ...responseCall,
-      leadId:
-        responseCall?.leadId || responseCall?._id || lead._id,
-      customerName:
-        responseCall?.customerName ||
-        lead.name ||
-        "Unknown Customer",
-      phone: responseCall?.phone || lead.phone,
-    };
-  }
+  const campaignStatusText = useMemo(() => {
+    if (!campaignActive) {
+      return "Ready to call pending customers";
+    }
 
-  async function openCallForLead(lead) {
-    const response = await startMockCall(lead._id);
-    const newActiveCall = createActiveCall(
-      response.call,
-      lead
-    );
+    if (campaignPhase === "starting") {
+      return `Starting call for ${
+        campaignCurrentCustomer?.name || "customer"
+      }`;
+    }
 
-    setActiveCall(newActiveCall);
-    return newActiveCall;
-  }
+    if (campaignPhase === "calling") {
+      return `Calling ${
+        campaignCurrentCustomer?.name || "customer"
+      }`;
+    }
+
+    if (campaignPhase === "waiting") {
+      return `Next call in ${campaignSecondsRemaining} second${
+        campaignSecondsRemaining === 1 ? "" : "s"
+      }`;
+    }
+
+    return "Campaign currently running";
+  }, [
+    campaignActive,
+    campaignCurrentCustomer,
+    campaignPhase,
+    campaignSecondsRemaining,
+  ]);
 
   function resetCampaignState() {
     setCampaignActive(false);
     setCampaignQueue([]);
     setCampaignIndex(-1);
+    setCampaignPhase("idle");
+    setCampaignSecondsRemaining(0);
   }
 
   function handleInputChange(event) {
@@ -765,6 +788,194 @@ function App() {
     }
   }
 
+  async function fetchCampaignLeads() {
+    const response = await getLeads({ limit: 100 });
+    const latestLeads = response.leads || [];
+
+    setLeads(latestLeads);
+    setBackendConnected(true);
+
+    return latestLeads;
+  }
+
+  async function waitForCampaignCallToFinish(leadId, runId) {
+    const startedWaitingAt = Date.now();
+
+    while (campaignRunIdRef.current === runId) {
+      await wait(CAMPAIGN_POLL_INTERVAL_MS);
+
+      if (campaignRunIdRef.current !== runId) {
+        return { cancelled: true };
+      }
+
+      try {
+        const latestLeads = await fetchCampaignLeads();
+        const latestLead = latestLeads.find(
+          (lead) => lead._id === leadId
+        );
+
+        if (!latestLead) {
+          return {
+            completed: true,
+            status: "missing",
+          };
+        }
+
+        if (TERMINAL_CALL_STATUSES.has(latestLead.callStatus)) {
+          return {
+            completed: true,
+            status: latestLead.callStatus,
+            lead: latestLead,
+          };
+        }
+
+        if (
+          Date.now() - startedWaitingAt >=
+          CAMPAIGN_MAX_WAIT_MS
+        ) {
+          return {
+            completed: true,
+            status: "timeout",
+            lead: latestLead,
+          };
+        }
+      } catch {
+        setBackendConnected(false);
+
+        if (
+          Date.now() - startedWaitingAt >=
+          CAMPAIGN_MAX_WAIT_MS
+        ) {
+          return {
+            completed: true,
+            status: "timeout",
+          };
+        }
+      }
+    }
+
+    return { cancelled: true };
+  }
+
+  async function waitBeforeNextCampaignCall(runId) {
+    setCampaignPhase("waiting");
+
+    for (
+      let seconds = CAMPAIGN_DELAY_SECONDS;
+      seconds > 0;
+      seconds -= 1
+    ) {
+      if (campaignRunIdRef.current !== runId) {
+        return false;
+      }
+
+      setCampaignSecondsRemaining(seconds);
+      await wait(1000);
+    }
+
+    setCampaignSecondsRemaining(0);
+    return campaignRunIdRef.current === runId;
+  }
+
+  async function runLiveCampaign(queue, runId) {
+    for (let index = 0; index < queue.length; index += 1) {
+      if (campaignRunIdRef.current !== runId) {
+        return;
+      }
+
+      const lead = queue[index];
+
+      setCampaignIndex(index);
+      setCampaignPhase("starting");
+      setCampaignSecondsRemaining(0);
+      setCallLoading(true);
+
+      let callWasStarted = false;
+
+      try {
+        await startLiveCall(lead._id);
+        callWasStarted = true;
+        setCampaignPhase("calling");
+
+        showMessage(
+          "success",
+          `Live call started for ${lead.name || "customer"}`
+        );
+      } catch (error) {
+        try {
+          const latestLeads = await fetchCampaignLeads();
+          const latestLead = latestLeads.find(
+            (item) => item._id === lead._id
+          );
+
+          callWasStarted = ACTIVE_CALL_STATUSES.has(
+            latestLead?.callStatus
+          );
+        } catch {
+          setBackendConnected(false);
+        }
+
+        if (callWasStarted) {
+          setCampaignPhase("calling");
+          showMessage(
+            "success",
+            `Exotel accepted the call for ${
+              lead.name || "customer"
+            }`
+          );
+        } else {
+          showMessage(
+            "error",
+            `${lead.name || "Customer"}: ${
+              error.message || "Unable to start Exotel call"
+            }`
+          );
+        }
+      } finally {
+        setCallLoading(false);
+      }
+
+      if (callWasStarted) {
+        const result = await waitForCampaignCallToFinish(
+          lead._id,
+          runId
+        );
+
+        if (result.cancelled) {
+          return;
+        }
+
+        if (result.status === "timeout") {
+          showMessage(
+            "error",
+            `${lead.name || "Customer"} exceeded the call wait limit. Moving to the next customer.`
+          );
+        }
+      }
+
+      if (campaignRunIdRef.current !== runId) {
+        return;
+      }
+
+      if (index + 1 < queue.length) {
+        const shouldContinue =
+          await waitBeforeNextCampaignCall(runId);
+
+        if (!shouldContinue) {
+          return;
+        }
+      }
+    }
+
+    if (campaignRunIdRef.current !== runId) {
+      return;
+    }
+
+    resetCampaignState();
+    await loadLeads({ silent: true });
+    showMessage("success", "Live campaign completed successfully");
+  }
+
   async function handleStartCampaign() {
     if (!backendConnected) {
       showMessage("error", "Backend is disconnected");
@@ -772,6 +983,18 @@ function App() {
     }
 
     if (campaignActive) {
+      return;
+    }
+
+    if (
+      leads.some((lead) =>
+        ACTIVE_CALL_STATUSES.has(lead.callStatus)
+      )
+    ) {
+      showMessage(
+        "error",
+        "Wait for the active call to finish before starting a campaign"
+      );
       return;
     }
 
@@ -783,12 +1006,12 @@ function App() {
         limit: 100,
       });
 
-      const pendingCustomers = (response.leads || []).filter(
+      const allPendingCustomers = (response.leads || []).filter(
         (lead) =>
           !lead.optedOut && lead.callStatus === "pending"
       );
 
-      if (pendingCustomers.length === 0) {
+      if (allPendingCustomers.length === 0) {
         showMessage(
           "error",
           "No pending customers are available"
@@ -796,166 +1019,34 @@ function App() {
         return;
       }
 
-      setCampaignQueue(pendingCustomers);
+      const campaignCustomers = allPendingCustomers.slice(
+        0,
+        CAMPAIGN_MAX_CUSTOMERS
+      );
+
+      const runId = campaignRunIdRef.current + 1;
+      campaignRunIdRef.current = runId;
+
+      setCampaignQueue(campaignCustomers);
       setCampaignIndex(0);
+      setCampaignPhase("starting");
+      setCampaignSecondsRemaining(0);
       setCampaignActive(true);
       setActiveView("campaigns");
 
-      await openCallForLead(pendingCustomers[0]);
-
       showMessage(
         "success",
-        `Campaign started with ${pendingCustomers.length} customers`
+        `Live campaign started with ${campaignCustomers.length} customer${
+          campaignCustomers.length === 1 ? "" : "s"
+        }`
       );
 
-      await loadLeads();
+      void runLiveCampaign(campaignCustomers, runId);
     } catch (error) {
       resetCampaignState();
       showMessage(
         "error",
-        error.message || "Unable to start campaign"
-      );
-    } finally {
-      setCallLoading(false);
-    }
-  }
-
-  async function handleMockDigit(digit) {
-    if (!activeCall?.leadId) {
-      showMessage("error", "No active call found");
-      return;
-    }
-
-    try {
-      setCallLoading(true);
-
-      const response = await submitMockDigit(
-        activeCall.leadId,
-        digit
-      );
-
-      setActiveCall((current) => ({
-        ...current,
-        ...response.call,
-        leadId: response.call?.leadId || current?.leadId,
-        customerName: current?.customerName,
-        phone: current?.phone,
-      }));
-
-      if (response.call?.callStep === "completed") {
-        showMessage(
-          "success",
-          "Customer response recorded successfully"
-        );
-        await loadLeads();
-      }
-    } catch (error) {
-      showMessage(
-        "error",
-        error.message ||
-          "Unable to record keypad response"
-      );
-    } finally {
-      setCallLoading(false);
-    }
-  }
-
-  async function handleNextCampaignCustomer() {
-    if (!campaignActive) {
-      return;
-    }
-
-    const nextIndex = campaignIndex + 1;
-
-    if (nextIndex >= campaignQueue.length) {
-      setActiveCall(null);
-      resetCampaignState();
-      showMessage(
-        "success",
-        "Campaign completed successfully"
-      );
-      await loadLeads();
-      return;
-    }
-
-    const nextLead = campaignQueue[nextIndex];
-
-    try {
-      setCallLoading(true);
-      setActiveCall(null);
-      setCampaignIndex(nextIndex);
-      await openCallForLead(nextLead);
-      showMessage(
-        "success",
-        `Calling ${nextLead.name || "next customer"}`
-      );
-      await loadLeads();
-    } catch (error) {
-      showMessage(
-        "error",
-        error.message || "Unable to start the next call"
-      );
-    } finally {
-      setCallLoading(false);
-    }
-  }
-
-  async function handleFinishCampaign() {
-    setActiveCall(null);
-    resetCampaignState();
-    showMessage(
-      "success",
-      "Campaign completed successfully"
-    );
-    await loadLeads();
-  }
-
-  async function handleEndMockCall() {
-    if (!activeCall?.leadId) {
-      setActiveCall(null);
-      return;
-    }
-
-    try {
-      setCallLoading(true);
-
-      if (!isCallCompleted(activeCall)) {
-        await endMockCall(activeCall.leadId);
-      }
-
-      if (campaignActive) {
-        const nextIndex = campaignIndex + 1;
-
-        if (nextIndex < campaignQueue.length) {
-          const nextLead = campaignQueue[nextIndex];
-
-          setCampaignIndex(nextIndex);
-          setActiveCall(null);
-          await openCallForLead(nextLead);
-
-          showMessage(
-            "success",
-            `Current call ended. Calling ${
-              nextLead.name || "next customer"
-            }`
-          );
-        } else {
-          setActiveCall(null);
-          resetCampaignState();
-          showMessage("success", "Campaign completed");
-        }
-
-        await loadLeads();
-        return;
-      }
-
-      setActiveCall(null);
-      showMessage("success", "Mock call ended");
-      await loadLeads();
-    } catch (error) {
-      showMessage(
-        "error",
-        error.message || "Unable to end mock call"
+        error.message || "Unable to start live campaign"
       );
     } finally {
       setCallLoading(false);
@@ -963,39 +1054,17 @@ function App() {
   }
 
   async function handleStopCampaign() {
-    try {
-      setCallLoading(true);
+    campaignRunIdRef.current += 1;
+    resetCampaignState();
+    setCallLoading(false);
 
-      if (
-        backendConnected &&
-        activeCall?.leadId &&
-        !isCallCompleted(activeCall)
-      ) {
-        await endMockCall(activeCall.leadId);
-      }
-
-      showMessage("success", "Campaign stopped");
-    } catch (error) {
-      showMessage(
-        "error",
-        error.message || "Unable to stop campaign cleanly"
-      );
-    } finally {
-      setActiveCall(null);
-      resetCampaignState();
-      setCallLoading(false);
-
-      if (backendConnected) {
-        await loadLeads();
-      }
-    }
-  }
-
-  async function handleCloseCallModal() {
-    setActiveCall(null);
+    showMessage(
+      "success",
+      "Campaign stopped. A call already connected may finish normally."
+    );
 
     if (backendConnected) {
-      await loadLeads();
+      await loadLeads({ silent: true });
     }
   }
 
@@ -1224,7 +1293,6 @@ function App() {
                     className="danger-button"
                     type="button"
                     onClick={handleStopCampaign}
-                    disabled={callLoading}
                   >
                     <Square size={17} />
                     Stop Campaign
@@ -1256,15 +1324,15 @@ function App() {
                 <span>Campaign status</span>
                 <strong>
                   {campaignActive
-                    ? "Campaign currently running"
+                    ? campaignStatusText
                     : "Ready to call pending customers"}
                 </strong>
                 <p>
                   {campaignActive
-                    ? `Customer ${campaignPosition} of ${campaignTotal}`
+                    ? `Customer ${campaignPosition} of ${campaignTotal} · one live call at a time`
                     : `${statistics.pending} customer${
                         statistics.pending === 1 ? "" : "s"
-                      } waiting in the queue`}
+                      } waiting · trial safety limit ${CAMPAIGN_MAX_CUSTOMERS}`}
                 </p>
               </div>
 
@@ -1542,20 +1610,6 @@ function App() {
         </div>
       )}
 
-      <MockCallModal
-        activeCall={activeCall}
-        loading={callLoading}
-        campaignActive={campaignActive}
-        campaignPosition={campaignPosition}
-        campaignTotal={campaignTotal}
-        hasNextCustomer={hasNextCampaignCustomer}
-        onDigit={handleMockDigit}
-        onEnd={handleEndMockCall}
-        onClose={handleCloseCallModal}
-        onNextCustomer={handleNextCampaignCustomer}
-        onFinishCampaign={handleFinishCampaign}
-        onStopCampaign={handleStopCampaign}
-      />
     </div>
   );
 }

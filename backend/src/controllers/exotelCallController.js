@@ -2,6 +2,9 @@ const Lead = require("../models/Lead");
 const {
   startExotelFlowCall,
 } = require("../services/exotelService");
+const {
+  resetLeadIfStale,
+} = require("../utils/staleCallRecovery");
 
 async function startLiveCall(req, res) {
   try {
@@ -22,10 +25,14 @@ async function startLiveCall(req, res) {
     }
 
     if (["calling", "answered"].includes(lead.callStatus)) {
-      return res.status(409).json({
-        success: false,
-        message: "A call is already active for this customer",
-      });
+      const staleCallWasReset = await resetLeadIfStale(lead);
+
+      if (!staleCallWasReset) {
+        return res.status(409).json({
+          success: false,
+          message: "A call is already active for this customer",
+        });
+      }
     }
 
     lead.callStatus = "calling";

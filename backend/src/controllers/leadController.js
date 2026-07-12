@@ -3,6 +3,9 @@ const csv = require("csv-parser");
 
 const Lead = require("../models/Lead");
 const normalizePhone = require("../utils/normalizePhone");
+const {
+  resetAllStaleCalls,
+} = require("../utils/staleCallRecovery");
 
 const allowedStatuses = new Set([
   "pending",
@@ -121,6 +124,8 @@ async function createLead(req, res) {
 
 async function getLeads(req, res) {
   try {
+    await resetAllStaleCalls();
+
     const {
       status,
       service,

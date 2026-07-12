@@ -143,26 +143,8 @@ async function startExotelFlowCall(lead) {
     `http://my.exotel.com/${accountSid}` +
     `/exoml/start_voice/${flowId}`;
   const statusCallbackUrl = new URL(
-  `${publicBackendUrl}/api/webhooks/exotel/status`
-);
-
-statusCallbackUrl.searchParams.set(
-  "leadId",
-  String(lead._id)
-);
-
-const webhookSecret = String(
-  process.env.EXOTEL_WEBHOOK_SECRET || ""
-).trim();
-
-if (webhookSecret) {
-  statusCallbackUrl.searchParams.set(
-    "token",
-    webhookSecret
+    `${publicBackendUrl}/api/webhooks/exotel/status`
   );
-}
-
-const statusCallback = statusCallbackUrl.toString();
 
   statusCallbackUrl.searchParams.set("leadId", String(lead._id));
 
@@ -257,6 +239,104 @@ const statusCallback = statusCallbackUrl.toString();
   };
 }
 
+
+async function getExotelCallDetails(callSid) {
+  const accountSid = requireEnvironmentVariable(
+    "EXOTEL_ACCOUNT_SID"
+  );
+  const apiKey = requireEnvironmentVariable("EXOTEL_API_KEY");
+  const apiToken = requireEnvironmentVariable(
+    "EXOTEL_API_TOKEN"
+  );
+  const subdomain = normalizeSubdomain(
+    requireEnvironmentVariable("EXOTEL_SUBDOMAIN")
+  );
+  const normalizedCallSid = String(callSid || "").trim();
+
+  if (!normalizedCallSid) {
+    throw new Error("Exotel Call SID is required");
+  }
+
+  const endpoint =
+    `https://${subdomain}` +
+    `/v1/Accounts/${encodeURIComponent(accountSid)}` +
+    `/Calls/${encodeURIComponent(normalizedCallSid)}.json`;
+
+  const encodedCredentials = Buffer.from(
+    `${apiKey}:${apiToken}`
+  ).toString("base64");
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    getRequestTimeout()
+  );
+
+  let response;
+
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Authorization: `Basic ${encodedCredentials}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Exotel call-status request timed out");
+    }
+
+    throw new Error(
+      `Unable to retrieve Exotel call status: ${error.message}`
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const rawBody = await response.text();
+  const { data, call } = parseExotelResponse(rawBody);
+
+  if (!response.ok) {
+    throw new Error(
+      extractExotelError(rawBody, data, response.status)
+    );
+  }
+
+  if (!call) {
+    throw new Error("Exotel returned no call details");
+  }
+
+  const durationValue =
+    call.ConversationDuration ??
+    call.conversationDuration ??
+    call.Duration ??
+    call.duration ??
+    0;
+  const duration = Number(durationValue);
+
+  return {
+    providerCallId:
+      call.Sid ||
+      call.sid ||
+      call.CallSid ||
+      call.callSid ||
+      normalizedCallSid,
+    providerStatus: String(
+      call.Status || call.status || "unknown"
+    )
+      .trim()
+      .toLowerCase(),
+    callDuration:
+      Number.isFinite(duration) && duration >= 0 ? duration : 0,
+    recordingUrl:
+      call.RecordingUrl || call.recordingUrl || null,
+    startTime: call.StartTime || call.startTime || null,
+    endTime: call.EndTime || call.endTime || null,
+  };
+}
+
 module.exports = {
+  getExotelCallDetails,
   startExotelFlowCall,
 };

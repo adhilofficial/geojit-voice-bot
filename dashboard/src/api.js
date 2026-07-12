@@ -121,6 +121,19 @@ export async function startLiveCall(leadId) {
   return handleResponse(response);
 }
 
+export async function syncLiveCall(leadId) {
+  const response = await request(
+    `${API_BASE_URL}/live-calls/${encodeURIComponent(
+      leadId
+    )}/sync`,
+    {
+      method: "POST",
+    }
+  );
+
+  return handleResponse(response);
+}
+
 export async function startMockCall(leadId) {
   const response = await request(
     `${API_BASE_URL}/calls/${encodeURIComponent(

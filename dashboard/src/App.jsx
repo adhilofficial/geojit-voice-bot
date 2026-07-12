@@ -33,6 +33,7 @@ import {
   downloadInterestedCsv,
   getLeads,
   startLiveCall,
+  syncLiveCall,
   uploadLeadCsv,
 } from "./api";
 
@@ -459,19 +460,47 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const hasActiveLiveCall =
-      !campaignActive &&
-      leads.some((lead) =>
-        ["calling", "answered"].includes(lead.callStatus)
-      );
+    const activeLiveLeads = !campaignActive
+      ? leads.filter(
+          (lead) =>
+            ["calling", "answered"].includes(
+              lead.callStatus
+            ) && lead.providerCallId
+        )
+      : [];
 
-    if (!hasActiveLiveCall) {
+    if (activeLiveLeads.length === 0) {
       return undefined;
     }
 
-    const interval = window.setInterval(() => {
-      void loadLeads({ silent: true });
-    }, 5000);
+    let refreshRunning = false;
+
+    const refreshLiveCalls = async () => {
+      if (refreshRunning) {
+        return;
+      }
+
+      refreshRunning = true;
+
+      try {
+        await Promise.allSettled(
+          activeLiveLeads.map((lead) =>
+            syncLiveCall(lead._id)
+          )
+        );
+
+        await loadLeads({ silent: true });
+      } finally {
+        refreshRunning = false;
+      }
+    };
+
+    void refreshLiveCalls();
+
+    const interval = window.setInterval(
+      refreshLiveCalls,
+      10000
+    );
 
     return () => {
       window.clearInterval(interval);
@@ -809,6 +838,8 @@ function App() {
       }
 
       try {
+        await syncLiveCall(leadId).catch(() => null);
+
         const latestLeads = await fetchCampaignLeads();
         const latestLead = latestLeads.find(
           (lead) => lead._id === leadId

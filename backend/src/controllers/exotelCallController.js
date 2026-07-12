@@ -1,5 +1,6 @@
 const Lead = require("../models/Lead");
 const {
+  getExotelCallDetails,
   startExotelFlowCall,
 } = require("../services/exotelService");
 const {
@@ -126,6 +127,116 @@ async function startLiveCall(req, res) {
   }
 }
 
+
+const providerStatusMap = {
+  queued: "calling",
+  ringing: "calling",
+  "in-progress": "calling",
+  answered: "answered",
+  completed: "completed",
+  failed: "failed",
+  busy: "busy",
+  "no-answer": "no_answer",
+  no_answer: "no_answer",
+  canceled: "failed",
+  cancelled: "failed",
+};
+
+const terminalProviderStatuses = new Set([
+  "completed",
+  "failed",
+  "busy",
+  "no-answer",
+  "no_answer",
+  "canceled",
+  "cancelled",
+]);
+
+async function syncLiveCall(req, res) {
+  try {
+    const lead = await Lead.findById(req.params.leadId);
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+
+    if (!lead.providerCallId) {
+      return res.status(400).json({
+        success: false,
+        message: "This customer has no Exotel Call SID to sync",
+      });
+    }
+
+    const details = await getExotelCallDetails(
+      lead.providerCallId
+    );
+    const providerStatus = details.providerStatus;
+
+    lead.providerCallId = details.providerCallId;
+    lead.providerStatus = providerStatus;
+
+    if (providerStatusMap[providerStatus]) {
+      lead.callStatus = providerStatusMap[providerStatus];
+    }
+
+    if (terminalProviderStatuses.has(providerStatus)) {
+      lead.callStep = "completed";
+    }
+
+    if (
+      Number.isFinite(details.callDuration) &&
+      details.callDuration >= 0
+    ) {
+      lead.callDuration = details.callDuration;
+    }
+
+    if (details.recordingUrl) {
+      lead.recordingUrl = details.recordingUrl;
+    }
+
+    if (providerStatus === "completed") {
+      lead.lastCallError = null;
+    } else if (terminalProviderStatuses.has(providerStatus)) {
+      lead.lastCallError =
+        `Exotel call ended with status: ${providerStatus}`;
+    }
+
+    await lead.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Exotel call status synchronized",
+      call: {
+        leadId: lead._id,
+        callStatus: lead.callStatus,
+        providerStatus: lead.providerStatus,
+        providerCallId: lead.providerCallId,
+        callDuration: lead.callDuration,
+        recordingUrl: lead.recordingUrl,
+      },
+    });
+  } catch (error) {
+    console.error("Sync Exotel call error:", error);
+
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customer ID",
+      });
+    }
+
+    return res.status(502).json({
+      success: false,
+      message: "Unable to synchronize Exotel call status",
+      error: error.message,
+    });
+  }
+}
+
 module.exports = {
   startLiveCall,
+  syncLiveCall,
 };

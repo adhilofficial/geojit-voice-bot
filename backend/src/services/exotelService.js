@@ -143,8 +143,26 @@ async function startExotelFlowCall(lead) {
     `http://my.exotel.com/${accountSid}` +
     `/exoml/start_voice/${flowId}`;
   const statusCallbackUrl = new URL(
-    `${publicBackendUrl}/api/webhooks/exotel/status`
+  `${publicBackendUrl}/api/webhooks/exotel/status`
+);
+
+statusCallbackUrl.searchParams.set(
+  "leadId",
+  String(lead._id)
+);
+
+const webhookSecret = String(
+  process.env.EXOTEL_WEBHOOK_SECRET || ""
+).trim();
+
+if (webhookSecret) {
+  statusCallbackUrl.searchParams.set(
+    "token",
+    webhookSecret
   );
+}
+
+const statusCallback = statusCallbackUrl.toString();
 
   statusCallbackUrl.searchParams.set("leadId", String(lead._id));
 

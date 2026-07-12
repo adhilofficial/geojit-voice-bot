@@ -91,6 +91,17 @@ export async function startMockCall(leadId) {
   return handleResponse(response);
 }
 
+export async function startLiveCall(leadId) {
+  const response = await fetch(
+    `${API_BASE_URL}/live-calls/${leadId}/start`,
+    {
+      method: "POST",
+    }
+  );
+
+  return handleResponse(response);
+}
+
 export async function submitMockDigit(leadId, digit) {
   const response = await fetch(
     `${API_BASE_URL}/calls/${leadId}/digit`,

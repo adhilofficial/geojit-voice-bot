@@ -120,18 +120,29 @@ const leadSchema = new mongoose.Schema(
     providerCallId: {
       type: String,
       default: null,
+      index: true,
+    },
+
+    providerStatus: {
+      type: String,
+      default: null,
     },
 
     callDuration: {
-  type: Number,
-  default: 0,
-  min: 0,
-},
+      type: Number,
+      default: 0,
+      min: 0,
+    },
 
-lastCallError: {
-  type: String,
-  default: null,
-},
+    recordingUrl: {
+      type: String,
+      default: null,
+    },
+
+    lastCallError: {
+      type: String,
+      default: null,
+    },
 
     lastCalledAt: {
       type: Date,

@@ -1020,8 +1020,8 @@ function App() {
               {checkingBackend
                 ? "Checking..."
                 : backendConnected
-                  ? "online"
-                  : "offline"}
+                  ? "Backend online"
+                  : "Backend offline"}
             </div>
 
             <button

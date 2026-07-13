@@ -12,6 +12,7 @@ import {
   getCurrentAdmin,
   getStoredSessionExpiry,
   loginAdmin,
+  logoutAdmin,
   saveAuthSession,
 } from "../api.js";
 import LoginPage from "./LoginPage.jsx";
@@ -138,7 +139,7 @@ function AuthenticatedRoot() {
     scheduleExpiry(response.expiresAt);
   }
 
-  const handleLogoutRequest = useCallback(() => {
+  const handleLogoutRequest = useCallback(async () => {
     const adminEmail = admin?.email || "this administrator account";
 
     const confirmed = window.confirm(
@@ -147,6 +148,12 @@ function AuthenticatedRoot() {
 
     if (!confirmed) {
       return;
+    }
+
+    try {
+      await logoutAdmin();
+    } catch {
+      // Local logout must still complete if the audit request fails.
     }
 
     logout("");

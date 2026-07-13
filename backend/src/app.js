@@ -8,6 +8,7 @@ const callRoutes = require("./routes/callRoutes");
 const liveCallRoutes = require("./routes/liveCallRoutes");
 const webhookRoutes = require("./routes/webhookRoutes");
 const authRoutes = require("./routes/authRoutes");
+const activityLogRoutes = require("./routes/activityLogRoutes");
 const requireAuth = require("./middleware/requireAuth");
 
 const app = express();
@@ -100,6 +101,7 @@ app.use("/api", requireAuth);
 app.use("/api/leads", leadRoutes);
 app.use("/api/calls", callRoutes);
 app.use("/api/live-calls", liveCallRoutes);
+app.use("/api/activity-logs", activityLogRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

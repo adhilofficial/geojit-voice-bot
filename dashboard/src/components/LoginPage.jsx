@@ -4,7 +4,6 @@ import {
   EyeOff,
   LockKeyhole,
   Mail,
-  PhoneCall,
   ShieldCheck,
 } from "lucide-react";
 
@@ -40,8 +39,8 @@ function LoginPage({ onLogin, initialError = "" }) {
     <main className="login-page">
       <section className="login-visual-panel">
         <div className="login-brand-mark">
-          <span>
-            <PhoneCall size={25} />
+          <span className="login-brand-logo">
+            <img src="/geojit-logo.png" alt="Geojit" />
           </span>
           <div>
             <strong>Geojit</strong>

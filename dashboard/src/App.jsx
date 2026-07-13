@@ -7,10 +7,12 @@ import {
 } from "react";
 
 import {
+  Activity,
   CheckCircle2,
   ClipboardList,
   Clock3,
   Download,
+  FileClock,
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
@@ -40,8 +42,11 @@ import {
   downloadCallbackRequestsCsv,
   downloadCampaignResultsCsv,
   downloadInterestedCsv,
+  downloadActivityLogsCsv,
+  getActivityLogs,
   getCallbackRequests,
   getLeads,
+  recordAdminActivity,
   startLiveCall,
   syncLiveCall,
   updateCallbackFollowUpStatus,
@@ -79,6 +84,35 @@ const callbackStatusLabels = {
   pending: "Pending",
   contacted: "Contacted",
   completed: "Completed",
+};
+
+const activityActionLabels = {
+  admin_login: "Admin Login",
+  admin_logout: "Admin Logout",
+  customer_added: "Customer Added",
+  customer_csv_uploaded: "CSV Uploaded",
+  customer_deleted: "Customer Deleted",
+  individual_call_started: "Individual Call Started",
+  campaign_started: "Campaign Started",
+  campaign_stopped: "Campaign Stopped",
+  campaign_completed: "Campaign Completed",
+  callback_marked_pending: "Callback Marked Pending",
+  callback_marked_contacted: "Callback Marked Contacted",
+  callback_marked_completed: "Callback Marked Completed",
+  interested_customers_exported: "Interested List Exported",
+  campaign_results_exported: "Campaign Results Exported",
+  callback_list_exported: "Callback List Exported",
+  activity_log_exported: "Activity Log Exported",
+};
+
+const activityCategoryLabels = {
+  auth: "Authentication",
+  customer: "Customer",
+  call: "Call",
+  campaign: "Campaign",
+  callback: "Callback",
+  export: "Export",
+  system: "System",
 };
 
 const ACTIVE_CALL_STATUSES = new Set(["calling", "answered"]);
@@ -619,6 +653,177 @@ function CallbackQueue({
   );
 }
 
+
+function ActivityLogTable({
+  logs,
+  loading,
+  search,
+  onSearchChange,
+  categoryFilter,
+  onCategoryChange,
+  resultFilter,
+  onResultChange,
+}) {
+  return (
+    <section className="data-card activity-log-card">
+      <div className="customer-table-toolbar">
+        <div>
+          <p className="section-kicker">Administrator audit trail</p>
+          <h2>Admin Activity Log</h2>
+          <p>
+            Review administrator access, customer changes, calls,
+            campaigns, follow-ups and exports.
+          </p>
+        </div>
+
+        <div className="customer-table-actions activity-filter-actions">
+          <div className="search-control">
+            <Search size={18} />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) =>
+                onSearchChange(event.target.value)
+              }
+              placeholder="Search admin, action or customer"
+              aria-label="Search activity logs"
+            />
+          </div>
+
+          <select
+            value={categoryFilter}
+            onChange={(event) =>
+              onCategoryChange(event.target.value)
+            }
+            aria-label="Filter activity by category"
+          >
+            <option value="">All categories</option>
+            <option value="auth">Authentication</option>
+            <option value="customer">Customer</option>
+            <option value="call">Call</option>
+            <option value="campaign">Campaign</option>
+            <option value="callback">Callback</option>
+            <option value="export">Export</option>
+            <option value="system">System</option>
+          </select>
+
+          <select
+            value={resultFilter}
+            onChange={(event) =>
+              onResultChange(event.target.value)
+            }
+            aria-label="Filter activity by result"
+          >
+            <option value="">All results</option>
+            <option value="success">Successful</option>
+            <option value="failed">Failed</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="table-wrapper activity-table-wrapper">
+        <table className="activity-table">
+          <thead>
+            <tr>
+              <th>Date & Time</th>
+              <th>Administrator</th>
+              <th>Category</th>
+              <th>Activity</th>
+              <th>Target</th>
+              <th>Result</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan="7" className="empty-state">
+                  <div className="empty-state-icon">
+                    <RefreshCw size={22} className="spin" />
+                  </div>
+                  Loading administrator activity...
+                </td>
+              </tr>
+            ) : logs.length === 0 ? (
+              <tr>
+                <td colSpan="7" className="empty-state">
+                  <div className="empty-state-icon">
+                    <FileClock size={22} />
+                  </div>
+                  No activity entries match the selected filters.
+                </td>
+              </tr>
+            ) : (
+              logs.map((log) => (
+                <tr key={log._id}>
+                  <td className="activity-date-cell">
+                    {formatDate(log.createdAt)}
+                  </td>
+                  <td>
+                    <div className="activity-admin-cell">
+                      <span>
+                        {(log.adminEmail || "A")
+                          .charAt(0)
+                          .toUpperCase()}
+                      </span>
+                      <strong>{log.adminEmail || "system"}</strong>
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      className={`activity-category-badge activity-category-${
+                        log.category || "system"
+                      }`}
+                    >
+                      {activityCategoryLabels[log.category] ||
+                        log.category ||
+                        "System"}
+                    </span>
+                  </td>
+                  <td>
+                    <strong className="activity-action-name">
+                      {activityActionLabels[log.action] ||
+                        String(log.action || "Activity")
+                          .replaceAll("_", " ")
+                          .replace(/\b\w/g, (letter) =>
+                            letter.toUpperCase()
+                          )}
+                    </strong>
+                  </td>
+                  <td>
+                    <span className="activity-target-name">
+                      {log.targetName ||
+                        log.metadata?.phone ||
+                        "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={`activity-result-badge activity-result-${
+                        log.result || "success"
+                      }`}
+                    >
+                      {log.result === "failed"
+                        ? "Failed"
+                        : "Success"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="activity-description">
+                      {log.description || "—"}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function App({ admin, onLogout }) {
   const messageTimerRef = useRef(null);
   const campaignRunIdRef = useRef(0);
@@ -667,6 +872,23 @@ function App({ admin, onLogout }) {
   const [updatingCallbackId, setUpdatingCallbackId] =
     useState(null);
   const [exportingCallbacks, setExportingCallbacks] =
+    useState(false);
+
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activitySummary, setActivitySummary] = useState({
+    total: 0,
+    today: 0,
+    successful: 0,
+    failed: 0,
+    administrators: 0,
+  });
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityCategoryFilter, setActivityCategoryFilter] =
+    useState("");
+  const [activityResultFilter, setActivityResultFilter] =
+    useState("");
+  const [exportingActivity, setExportingActivity] =
     useState(false);
 
   const [statusFilter, setStatusFilter] = useState("");
@@ -770,9 +992,52 @@ function App({ admin, onLogout }) {
     [showMessage]
   );
 
+  const loadActivityLogs = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        if (!silent) {
+          setActivityLoading(true);
+        }
+
+        const response = await getActivityLogs({ limit: 100 });
+
+        setActivityLogs(response.logs || []);
+        setActivitySummary(
+          response.summary || {
+            total: 0,
+            today: 0,
+            successful: 0,
+            failed: 0,
+            administrators: 0,
+          }
+        );
+        setBackendConnected(true);
+      } catch (error) {
+        if (!silent) {
+          showMessage(
+            "error",
+            error.message ||
+              "Unable to load administrator activity"
+          );
+        }
+      } finally {
+        if (!silent) {
+          setActivityLoading(false);
+        }
+      }
+    },
+    [showMessage]
+  );
+
   useEffect(() => {
     void Promise.all([loadLeads(), loadCallbacks()]);
   }, [loadCallbacks, loadLeads]);
+
+  useEffect(() => {
+    if (activeView === "activity") {
+      void loadActivityLogs();
+    }
+  }, [activeView, loadActivityLogs]);
 
   useEffect(() => {
     checkConnection();
@@ -908,6 +1173,43 @@ function App({ admin, onLogout }) {
     callbackSearch,
     callbackStatusFilter,
     callbacks,
+  ]);
+
+  const filteredActivityLogs = useMemo(() => {
+    const query = activitySearch.trim().toLowerCase();
+
+    return activityLogs.filter((log) => {
+      const matchesCategory =
+        !activityCategoryFilter ||
+        log.category === activityCategoryFilter;
+      const matchesResult =
+        !activityResultFilter ||
+        log.result === activityResultFilter;
+      const matchesSearch =
+        !query ||
+        String(log.adminEmail || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(log.action || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(log.description || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(log.targetName || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(log.metadata?.phone || "")
+          .toLowerCase()
+          .includes(query);
+
+      return matchesCategory && matchesResult && matchesSearch;
+    });
+  }, [
+    activityCategoryFilter,
+    activityLogs,
+    activityResultFilter,
+    activitySearch,
   ]);
 
   const statistics = useMemo(() => {
@@ -1195,6 +1497,35 @@ function App({ admin, onLogout }) {
       );
     } finally {
       setExportingCallbacks(false);
+    }
+  }
+
+  async function handleExportActivity() {
+    if (!backendConnected) {
+      showMessage("error", "Backend is disconnected");
+      return;
+    }
+
+    try {
+      setExportingActivity(true);
+      await downloadActivityLogsCsv({
+        search: activitySearch.trim(),
+        category: activityCategoryFilter,
+        result: activityResultFilter,
+      });
+      showMessage(
+        "success",
+        "Administrator activity exported successfully"
+      );
+      await loadActivityLogs({ silent: true });
+    } catch (error) {
+      showMessage(
+        "error",
+        error.message ||
+          "Unable to export administrator activity"
+      );
+    } finally {
+      setExportingActivity(false);
     }
   }
 
@@ -1596,6 +1927,20 @@ function App({ admin, onLogout }) {
     }
 
     resetCampaignState();
+
+    await recordAdminActivity({
+      action: "campaign_completed",
+      description: `Completed live campaign with ${queue.length} customer${
+        queue.length === 1 ? "" : "s"
+      }`,
+      targetType: "campaign",
+      targetName: queue[0]?.batchName || "Geojit Campaign",
+      metadata: {
+        customerCount: queue.length,
+        leadIds: queue.map((lead) => lead._id),
+      },
+    }).catch(() => null);
+
     await Promise.all([
       loadLeads({ silent: true }),
       loadCallbacks({ silent: true }),
@@ -1669,6 +2014,20 @@ function App({ admin, onLogout }) {
         }`
       );
 
+      await recordAdminActivity({
+        action: "campaign_started",
+        description: `Started live campaign with ${campaignCustomers.length} customer${
+          campaignCustomers.length === 1 ? "" : "s"
+        }`,
+        targetType: "campaign",
+        targetName:
+          campaignCustomers[0]?.batchName || "Geojit Campaign",
+        metadata: {
+          customerCount: campaignCustomers.length,
+          leadIds: campaignCustomers.map((lead) => lead._id),
+        },
+      }).catch(() => null);
+
       void runLiveCampaign(campaignCustomers, runId);
     } catch (error) {
       resetCampaignState();
@@ -1691,6 +2050,18 @@ function App({ admin, onLogout }) {
       "Campaign stopped. A call already connected may finish normally."
     );
 
+    await recordAdminActivity({
+      action: "campaign_stopped",
+      description: "Stopped the active live campaign",
+      targetType: "campaign",
+      targetName:
+        campaignCurrentCustomer?.batchName || "Geojit Campaign",
+      metadata: {
+        stoppedAtPosition: campaignPosition,
+        totalCustomers: campaignTotal,
+      },
+    }).catch(() => null);
+
     if (backendConnected) {
       await Promise.all([
         loadLeads({ silent: true }),
@@ -1700,11 +2071,17 @@ function App({ admin, onLogout }) {
   }
 
   async function handleRefresh() {
-    await Promise.allSettled([
+    const refreshTasks = [
       checkConnection(),
       loadLeads(),
       loadCallbacks(),
-    ]);
+    ];
+
+    if (activeView === "activity") {
+      refreshTasks.push(loadActivityLogs());
+    }
+
+    await Promise.allSettled(refreshTasks);
   }
 
   const tableProps = {
@@ -1731,8 +2108,8 @@ function App({ admin, onLogout }) {
             type="button"
             onClick={() => setActiveView("dashboard")}
           >
-            <span className="top-brand-icon">
-              <PhoneCall size={22} />
+            <span className="top-brand-icon top-brand-logo">
+              <img src="/geojit-logo.png" alt="Geojit" />
             </span>
 
             <span>
@@ -1773,6 +2150,17 @@ function App({ admin, onLogout }) {
             >
               <ClipboardList size={17} />
               Callback Requests
+            </button>
+
+            <button
+              className={
+                activeView === "activity" ? "active" : ""
+              }
+              type="button"
+              onClick={() => setActiveView("activity")}
+            >
+              <Activity size={17} />
+              Activity Log
             </button>
 
             <button
@@ -2203,6 +2591,82 @@ function App({ admin, onLogout }) {
               onUpdateStatus={handleUpdateCallbackStatus}
               updatingCallbackId={updatingCallbackId}
               backendConnected={backendConnected}
+            />
+          </>
+        )}
+
+        {activeView === "activity" && (
+          <>
+            <section className="page-hero compact-hero">
+              <div>
+                <p className="page-eyebrow">Security and operations</p>
+                <h1>Admin Activity Log</h1>
+                <p>
+                  Track administrator access and every important
+                  customer, call, campaign, callback and export action.
+                </p>
+              </div>
+
+              <div className="hero-inline-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={handleExportActivity}
+                  disabled={
+                    !backendConnected ||
+                    exportingActivity ||
+                    activitySummary.total === 0
+                  }
+                >
+                  <Download size={17} />
+                  {exportingActivity
+                    ? "Exporting..."
+                    : "Export Activity Log"}
+                </button>
+              </div>
+            </section>
+
+            <section className="activity-summary-grid">
+              <StatCard
+                icon={<FileClock size={21} />}
+                label="Total Activities"
+                value={activitySummary.total}
+              />
+              <StatCard
+                icon={<Clock3 size={21} />}
+                label="Today"
+                value={activitySummary.today}
+                tone="blue"
+              />
+              <StatCard
+                icon={<CheckCircle2 size={21} />}
+                label="Successful"
+                value={activitySummary.successful}
+                tone="green"
+              />
+              <StatCard
+                icon={<XCircle size={21} />}
+                label="Failed"
+                value={activitySummary.failed}
+                tone="red"
+              />
+              <StatCard
+                icon={<Users size={21} />}
+                label="Administrators"
+                value={activitySummary.administrators}
+                tone="purple"
+              />
+            </section>
+
+            <ActivityLogTable
+              logs={filteredActivityLogs}
+              loading={activityLoading}
+              search={activitySearch}
+              onSearchChange={setActivitySearch}
+              categoryFilter={activityCategoryFilter}
+              onCategoryChange={setActivityCategoryFilter}
+              resultFilter={activityResultFilter}
+              onResultChange={setActivityResultFilter}
             />
           </>
         )}

@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { logActivity } = require("../utils/activityLogger");
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -163,6 +164,17 @@ async function login(req, res) {
     const password = String(req.body?.password || "");
 
     if (!email || !password) {
+      await logActivity(req, {
+        adminEmail: email || "unknown",
+        action: "admin_login",
+        category: "auth",
+        result: "failed",
+        description: "Administrator login failed because credentials were incomplete",
+        metadata: {
+          reason: "missing_credentials",
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Email and password are required",
@@ -182,6 +194,18 @@ async function login(req, res) {
     if (!matchedAdmin || !passwordMatches) {
       attempt.count += 1;
       loginAttempts.set(key, attempt);
+
+      await logActivity(req, {
+        adminEmail: email,
+        action: "admin_login",
+        category: "auth",
+        result: "failed",
+        description: `Failed login attempt for ${email}`,
+        metadata: {
+          reason: "invalid_credentials",
+          attemptCount: attempt.count,
+        },
+      });
 
       return res.status(401).json({
         success: false,
@@ -207,6 +231,13 @@ async function login(req, res) {
     );
 
     const decoded = jwt.decode(token);
+
+    await logActivity(req, {
+      adminEmail: matchedAdmin.email,
+      action: "admin_login",
+      category: "auth",
+      description: `Administrator ${matchedAdmin.email} signed in`,
+    });
 
     return res.status(200).json({
       success: true,
@@ -237,6 +268,21 @@ async function login(req, res) {
   }
 }
 
+async function logout(req, res) {
+  sendNoStore(res);
+
+  await logActivity(req, {
+    action: "admin_logout",
+    category: "auth",
+    description: `Administrator ${req.admin.email} signed out`,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Logout recorded",
+  });
+}
+
 function getCurrentAdmin(req, res) {
   sendNoStore(res);
 
@@ -255,4 +301,5 @@ function getCurrentAdmin(req, res) {
 module.exports = {
   getCurrentAdmin,
   login,
+  logout,
 };

@@ -1,4 +1,5 @@
 const Lead = require("../models/Lead");
+const { logActivity } = require("../utils/activityLogger");
 const {
   getExotelCallDetails,
   startExotelFlowCall,
@@ -72,6 +73,21 @@ async function startLiveCall(req, res) {
 
       await lead.save();
 
+      await logActivity(req, {
+        action: "individual_call_started",
+        category: "call",
+        description: `Started Exotel call for ${lead.name}`,
+        targetType: "customer",
+        targetId: String(lead._id),
+        targetName: lead.name,
+        metadata: {
+          phone: lead.phone,
+          campaign: lead.batchName,
+          providerCallId: lead.providerCallId,
+          providerStatus: lead.providerStatus,
+        },
+      });
+
       return res.status(202).json({
         success: true,
         provider: "exotel",
@@ -105,6 +121,21 @@ async function startLiveCall(req, res) {
       lead.lastCallError = providerError.message;
 
       await lead.save();
+
+      await logActivity(req, {
+        action: "individual_call_started",
+        category: "call",
+        result: "failed",
+        description: `Failed to start Exotel call for ${lead.name}`,
+        targetType: "customer",
+        targetId: String(lead._id),
+        targetName: lead.name,
+        metadata: {
+          phone: lead.phone,
+          campaign: lead.batchName,
+          error: providerError.message,
+        },
+      });
 
       return res.status(502).json({
         success: false,

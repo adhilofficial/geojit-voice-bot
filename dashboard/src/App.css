@@ -1726,3 +1726,182 @@ tbody tr:hover {
     display: none;
   }
 }
+
+/* Geojit brand logo */
+
+.top-brand-logo {
+  overflow: hidden;
+  padding: 0;
+  background: #078b80;
+}
+
+.top-brand-logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* Administrator activity log */
+
+.activity-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.activity-log-card {
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.activity-filter-actions {
+  flex-wrap: wrap;
+}
+
+.activity-table {
+  min-width: 1220px;
+}
+
+.activity-date-cell {
+  min-width: 170px;
+  color: #52675d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.activity-admin-cell {
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.activity-admin-cell > span {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #087652;
+  background: #def2e8;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.activity-admin-cell strong {
+  max-width: 220px;
+  overflow: hidden;
+  color: #24382f;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-category-badge,
+.activity-result-badge {
+  min-height: 27px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 880;
+  white-space: nowrap;
+}
+
+.activity-category-auth {
+  color: #64439b;
+  border-color: #d8c8ef;
+  background: #f2ebff;
+}
+
+.activity-category-customer {
+  color: #08734b;
+  border-color: #b6ddca;
+  background: #e6f6ee;
+}
+
+.activity-category-call {
+  color: #216b9e;
+  border-color: #bdd9ea;
+  background: #eaf5fc;
+}
+
+.activity-category-campaign {
+  color: #855d06;
+  border-color: #ead392;
+  background: #fff4d3;
+}
+
+.activity-category-callback {
+  color: #8a4d2d;
+  border-color: #edccb9;
+  background: #fff0e7;
+}
+
+.activity-category-export,
+.activity-category-system {
+  color: #53645c;
+  border-color: #d1ddd7;
+  background: #f1f5f3;
+}
+
+.activity-result-success {
+  color: #08734b;
+  border-color: #adddc6;
+  background: #def5e9;
+}
+
+.activity-result-failed {
+  color: #a43d3d;
+  border-color: #efc0c0;
+  background: #fff0f0;
+}
+
+.activity-action-name {
+  min-width: 160px;
+  display: inline-block;
+  color: #263c32;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.activity-target-name {
+  min-width: 130px;
+  display: inline-block;
+  color: #52675d;
+  font-size: 11px;
+  font-weight: 730;
+}
+
+.activity-description {
+  min-width: 250px;
+  max-width: 360px;
+  display: inline-block;
+  color: #687a71;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1180px) {
+  .activity-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .activity-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .activity-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

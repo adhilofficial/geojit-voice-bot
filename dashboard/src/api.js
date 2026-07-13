@@ -196,6 +196,15 @@ export async function loginAdmin(email, password) {
   return handleResponse(response);
 }
 
+
+export async function logoutAdmin() {
+  const response = await request(`${API_BASE_URL}/auth/logout`, {
+    method: "POST",
+  });
+
+  return handleResponse(response);
+}
+
 export async function getCurrentAdmin() {
   const response = await request(
     `${API_BASE_URL}/auth/me`
@@ -438,6 +447,71 @@ export async function downloadCampaignResultsCsv(leadIds) {
     `geojit-campaign-results-${date}.csv`
   );
 }
+
+
+export async function getActivityLogs(params = {}) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const response = await request(
+    `${API_BASE_URL}/activity-logs${query ? `?${query}` : ""}`
+  );
+
+  return handleResponse(response);
+}
+
+export async function recordAdminActivity(payload) {
+  const response = await request(
+    `${API_BASE_URL}/activity-logs/events`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+export async function downloadActivityLogsCsv(params = {}) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const response = await request(
+    `${API_BASE_URL}/activity-logs/export${
+      query ? `?${query}` : ""
+    }`
+  );
+  const date = new Date().toISOString().slice(0, 10);
+
+  await downloadCsvResponse(
+    response,
+    `geojit-admin-activity-${date}.csv`
+  );
+}
+
 
 export async function checkBackendHealth() {
   const response = await request(

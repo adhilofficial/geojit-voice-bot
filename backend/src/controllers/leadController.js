@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 
 const Lead = require("../models/Lead");
 const normalizePhone = require("../utils/normalizePhone");
+const { logActivity } = require("../utils/activityLogger");
 const {
   resetAllStaleCalls,
 } = require("../utils/staleCallRecovery");
@@ -182,6 +183,20 @@ async function createLead(req, res) {
       phone: normalizedPhone,
       batchName: cleanText(batchName, "Manual Entry"),
       source: "manual",
+    });
+
+    await logActivity(req, {
+      action: "customer_added",
+      category: "customer",
+      description: `Added customer ${lead.name}`,
+      targetType: "customer",
+      targetId: String(lead._id),
+      targetName: lead.name,
+      metadata: {
+        phone: lead.phone,
+        campaign: lead.batchName,
+        source: lead.source,
+      },
     });
 
     return res.status(201).json({
@@ -438,6 +453,22 @@ async function uploadLeads(req, res) {
     const duplicatesInsideFile =
       validLeads.length - uniqueLeads.length;
 
+    await logActivity(req, {
+      action: "customer_csv_uploaded",
+      category: "customer",
+      description: `Processed customer CSV with ${insertedCount} new customer${insertedCount === 1 ? "" : "s"}`,
+      targetType: "campaign",
+      targetName: cleanText(req.body.batchName, "CSV Upload"),
+      metadata: {
+        totalCsvRows: rows.length,
+        validRows: validLeads.length,
+        inserted: insertedCount,
+        alreadyExisting: existingCount,
+        duplicatesInsideFile,
+        invalid: invalidRows.length,
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "CSV processed successfully",
@@ -560,6 +591,15 @@ async function exportInterestedLeads(req, res) {
       .join("\r\n");
     const date = new Date().toISOString().slice(0, 10);
 
+    await logActivity(req, {
+      action: "interested_customers_exported",
+      category: "export",
+      description: `Exported ${leads.length} interested customer${leads.length === 1 ? "" : "s"}`,
+      metadata: {
+        exportedCount: leads.length,
+      },
+    });
+
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
@@ -605,7 +645,27 @@ async function deleteLead(req, res) {
       });
     }
 
+    const deletedLead = {
+      id: String(lead._id),
+      name: lead.name,
+      phone: lead.phone,
+      campaign: lead.batchName,
+    };
+
     await lead.deleteOne();
+
+    await logActivity(req, {
+      action: "customer_deleted",
+      category: "customer",
+      description: `Deleted customer ${deletedLead.name}`,
+      targetType: "customer",
+      targetId: deletedLead.id,
+      targetName: deletedLead.name,
+      metadata: {
+        phone: deletedLead.phone,
+        campaign: deletedLead.campaign,
+      },
+    });
 
     return res.status(200).json({
       success: true,
@@ -716,6 +776,17 @@ async function exportCampaignResults(req, res) {
       .map((row) => row.map(escapeCsvValue).join(","))
       .join("\r\n");
     const date = new Date().toISOString().slice(0, 10);
+
+    await logActivity(req, {
+      action: "campaign_results_exported",
+      category: "export",
+      description: `Exported results for ${orderedLeads.length} campaign customer${orderedLeads.length === 1 ? "" : "s"}`,
+      targetType: "campaign",
+      metadata: {
+        exportedCount: orderedLeads.length,
+        leadIds: uniqueLeadIds,
+      },
+    });
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
@@ -855,6 +926,25 @@ async function updateCallbackStatus(req, res) {
 
     await lead.save();
 
+    await logActivity(req, {
+      action:
+        status === "contacted"
+          ? "callback_marked_contacted"
+          : status === "completed"
+            ? "callback_marked_completed"
+            : "callback_marked_pending",
+      category: "callback",
+      description: `Callback for ${lead.name} marked ${status}`,
+      targetType: "customer",
+      targetId: String(lead._id),
+      targetName: lead.name,
+      metadata: {
+        phone: lead.phone,
+        campaign: lead.batchName,
+        followUpStatus: status,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message:
@@ -929,6 +1019,18 @@ async function exportCallbackRequests(req, res) {
       .map((row) => row.map(escapeCsvValue).join(","))
       .join("\r\n");
     const date = new Date().toISOString().slice(0, 10);
+
+    await logActivity(req, {
+      action: "callback_list_exported",
+      category: "export",
+      description: `Exported ${callbacks.length} callback request${callbacks.length === 1 ? "" : "s"}`,
+      targetType: "callback_queue",
+      metadata: {
+        exportedCount: callbacks.length,
+        status: status || "all",
+        search: cleanText(search),
+      },
+    });
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(

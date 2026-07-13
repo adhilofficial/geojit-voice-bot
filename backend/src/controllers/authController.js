@@ -35,12 +35,23 @@ function getAttemptRecord(key) {
   return current;
 }
 
+function parseAdminEmails(value) {
+  return String(value || "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 function getAuthConfiguration() {
-  const adminEmail = String(
-    process.env.ADMIN_EMAIL || ""
-  )
-    .trim()
-    .toLowerCase();
+  // ADMIN_EMAIL is kept for backward compatibility.
+  // ADMIN_EMAILS accepts a comma-separated list of extra admins.
+  const adminEmails = Array.from(
+    new Set([
+      ...parseAdminEmails(process.env.ADMIN_EMAIL),
+      ...parseAdminEmails(process.env.ADMIN_EMAILS),
+    ])
+  );
+
   const passwordHash = String(
     process.env.ADMIN_PASSWORD_HASH || ""
   ).trim();
@@ -51,7 +62,7 @@ function getAuthConfiguration() {
     process.env.JWT_EXPIRES_IN || "8h"
   ).trim();
 
-  if (!adminEmail || !passwordHash || !jwtSecret) {
+  if (adminEmails.length === 0 || !passwordHash || !jwtSecret) {
     const error = new Error(
       "Admin authentication is not configured on the server"
     );
@@ -60,7 +71,7 @@ function getAuthConfiguration() {
   }
 
   return {
-    adminEmail,
+    adminEmails,
     passwordHash,
     jwtSecret,
     expiresIn,
@@ -97,8 +108,12 @@ async function login(req, res) {
       });
     }
 
-    const { adminEmail, passwordHash, jwtSecret, expiresIn } =
-      getAuthConfiguration();
+    const {
+      adminEmails,
+      passwordHash,
+      jwtSecret,
+      expiresIn,
+    } = getAuthConfiguration();
     const email = String(req.body?.email || "")
       .trim()
       .toLowerCase();
@@ -111,7 +126,7 @@ async function login(req, res) {
       });
     }
 
-    const emailMatches = email === adminEmail;
+    const emailMatches = adminEmails.includes(email);
     const passwordMatches = await bcrypt.compare(
       password,
       emailMatches ? passwordHash : DUMMY_PASSWORD_HASH
@@ -131,7 +146,7 @@ async function login(req, res) {
 
     const token = jwt.sign(
       {
-        email: adminEmail,
+        email,
         role: "admin",
       },
       jwtSecret,
@@ -154,7 +169,7 @@ async function login(req, res) {
         ? new Date(decoded.exp * 1000).toISOString()
         : null,
       admin: {
-        email: adminEmail,
+        email,
         role: "admin",
       },
     });

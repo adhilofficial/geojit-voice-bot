@@ -1631,3 +1631,98 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Administrator session controls */
+
+.admin-session-pill {
+  min-width: 0;
+  max-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px 6px 7px;
+  border: 1px solid #d8e5de;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 7px 20px rgba(18, 54, 38, 0.05);
+}
+
+.admin-session-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #087f57;
+  background: #e7f5ee;
+}
+
+.admin-session-copy {
+  min-width: 0;
+  display: block;
+}
+
+.admin-session-copy strong,
+.admin-session-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-session-copy strong {
+  color: #263c32;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.admin-session-copy small {
+  max-width: 145px;
+  margin-top: 2px;
+  color: #7a8a82;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.logout-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid #e7c8c8;
+  border-radius: 11px;
+  color: #a54040;
+  background: #fff8f8;
+  font-size: 11px;
+  font-weight: 800;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.logout-button:hover {
+  color: #8f2e2e;
+  border-color: #dfaaaa;
+  background: #fff0f0;
+}
+
+@media (max-width: 1280px) {
+  .admin-session-pill {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .logout-button {
+    width: 40px;
+    padding: 0;
+  }
+
+  .logout-button span {
+    display: none;
+  }
+}

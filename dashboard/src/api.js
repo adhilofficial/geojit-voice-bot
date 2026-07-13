@@ -4,8 +4,77 @@ const rawApiBaseUrl =
 
 const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 30000;
+const AUTH_TOKEN_STORAGE_KEY = "geojit:admin-access-token";
+const AUTH_EXPIRES_AT_STORAGE_KEY = "geojit:admin-expires-at";
 
-async function request(url, options = {}) {
+export function getAuthToken() {
+  try {
+    return window.sessionStorage.getItem(
+      AUTH_TOKEN_STORAGE_KEY
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuthSession(token, expiresAt) {
+  try {
+    window.sessionStorage.setItem(
+      AUTH_TOKEN_STORAGE_KEY,
+      token
+    );
+
+    if (expiresAt) {
+      window.sessionStorage.setItem(
+        AUTH_EXPIRES_AT_STORAGE_KEY,
+        expiresAt
+      );
+    } else {
+      window.sessionStorage.removeItem(
+        AUTH_EXPIRES_AT_STORAGE_KEY
+      );
+    }
+  } catch {
+    throw new Error(
+      "Unable to save the login session in this browser"
+    );
+  }
+}
+
+export function clearAuthSession() {
+  try {
+    window.sessionStorage.removeItem(
+      AUTH_TOKEN_STORAGE_KEY
+    );
+    window.sessionStorage.removeItem(
+      AUTH_EXPIRES_AT_STORAGE_KEY
+    );
+  } catch {
+    // Nothing else is required when storage is unavailable.
+  }
+}
+
+export function getStoredSessionExpiry() {
+  try {
+    return window.sessionStorage.getItem(
+      AUTH_EXPIRES_AT_STORAGE_KEY
+    );
+  } catch {
+    return null;
+  }
+}
+
+function notifyUnauthorized() {
+  window.dispatchEvent(
+    new CustomEvent("geojit:unauthorized")
+  );
+}
+
+async function request(
+  url,
+  options = {},
+  { auth = true } = {}
+) {
   const controller = new AbortController();
   const timeout = window.setTimeout(
     () => controller.abort(),
@@ -13,10 +82,28 @@ async function request(url, options = {}) {
   );
 
   try {
-    return await fetch(url, {
+    const headers = new Headers(options.headers || {});
+
+    if (auth) {
+      const token = getAuthToken();
+
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+    }
+
+    const response = await fetch(url, {
       ...options,
+      headers,
       signal: options.signal || controller.signal,
     });
+
+    if (response.status === 401 && auth && getAuthToken()) {
+      clearAuthSession();
+      notifyUnauthorized();
+    }
+
+    return response;
   } catch (error) {
     if (error.name === "AbortError") {
       throw new Error("The server took too long to respond");
@@ -46,6 +133,11 @@ async function handleResponse(response) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && getAuthToken()) {
+      clearAuthSession();
+      notifyUnauthorized();
+    }
+
     throw new Error(
       data.message ||
         data.error ||
@@ -86,6 +178,30 @@ async function downloadCsvResponse(response, fallbackFilename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(downloadUrl);
+}
+
+export async function loginAdmin(email, password) {
+  const response = await request(
+    `${API_BASE_URL}/auth/login`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, password }),
+    },
+    { auth: false }
+  );
+
+  return handleResponse(response);
+}
+
+export async function getCurrentAdmin() {
+  const response = await request(
+    `${API_BASE_URL}/auth/me`
+  );
+
+  return handleResponse(response);
 }
 
 export async function getLeads(params = {}) {
@@ -324,6 +440,10 @@ export async function downloadCampaignResultsCsv(leadIds) {
 }
 
 export async function checkBackendHealth() {
-  const response = await request(`${API_BASE_URL}/health`);
+  const response = await request(
+    `${API_BASE_URL}/health`,
+    {},
+    { auth: false }
+  );
   return handleResponse(response);
 }

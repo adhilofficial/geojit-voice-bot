@@ -7,6 +7,8 @@ const leadRoutes = require("./routes/leadRoutes");
 const callRoutes = require("./routes/callRoutes");
 const liveCallRoutes = require("./routes/liveCallRoutes");
 const webhookRoutes = require("./routes/webhookRoutes");
+const authRoutes = require("./routes/authRoutes");
+const requireAuth = require("./middleware/requireAuth");
 
 const app = express();
 
@@ -62,6 +64,7 @@ app.get("/", (req, res) => {
     message: "Geojit Voice Bot backend is running",
     health: "/api/health",
     leads: "/api/leads",
+    login: "/api/auth/login",
     liveCalls: "/api/live-calls/:leadId/start",
   });
 });
@@ -71,6 +74,11 @@ app.get("/api/health", (req, res) => {
     success: true,
     message: "Geojit Voice Bot API is working",
     callProvider: process.env.CALL_PROVIDER || "mock",
+    authConfigured: Boolean(
+      process.env.ADMIN_EMAIL &&
+        process.env.ADMIN_PASSWORD_HASH &&
+        process.env.JWT_SECRET
+    ),
     exotelConfigured: Boolean(
       process.env.EXOTEL_ACCOUNT_SID &&
         process.env.EXOTEL_API_KEY &&
@@ -83,10 +91,15 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Public routes: login, health and Exotel callbacks.
+app.use("/api/auth", authRoutes);
+app.use("/api/webhooks", webhookRoutes);
+
+// All business APIs below this point require an administrator token.
+app.use("/api", requireAuth);
 app.use("/api/leads", leadRoutes);
 app.use("/api/calls", callRoutes);
 app.use("/api/live-calls", liveCallRoutes);
-app.use("/api/webhooks", webhookRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

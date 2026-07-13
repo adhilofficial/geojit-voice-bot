@@ -13,6 +13,7 @@ import {
   Download,
   FileSpreadsheet,
   LayoutDashboard,
+  LogOut,
   Megaphone,
   Phone,
   PhoneCall,
@@ -21,6 +22,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   Square,
   Trash2,
   Upload,
@@ -617,7 +619,7 @@ function CallbackQueue({
   );
 }
 
-function App() {
+function App({ admin, onLogout }) {
   const messageTimerRef = useRef(null);
   const campaignRunIdRef = useRef(0);
 
@@ -1786,6 +1788,16 @@ function App() {
           </nav>
 
           <div className="top-nav-tools">
+            <div className="admin-session-pill" title={admin?.email}>
+              <span className="admin-session-icon">
+                <ShieldCheck size={16} />
+              </span>
+              <span className="admin-session-copy">
+                <strong>Administrator</strong>
+                <small>{admin?.email || "Signed in"}</small>
+              </span>
+            </div>
+
             <div
               className={`connection-pill ${
                 backendConnected ? "online" : "offline"
@@ -1812,6 +1824,17 @@ function App() {
                   loading || checkingBackend ? "spin" : ""
                 }
               />
+            </button>
+
+            <button
+              className="logout-button"
+              type="button"
+              onClick={onLogout}
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOut size={17} />
+              <span>Logout</span>
             </button>
           </div>
         </div>

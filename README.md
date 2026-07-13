@@ -1,16 +1,10 @@
-# Geojit Callback Follow-up Patch
+# Geojit Admin Authentication Patch
 
-Copy the contents of this patch into the existing `geojit-voice-bot` project root.
+Copy this patch over the project root. It adds administrator login, JWT-protected business APIs, automatic session expiry and a logout control.
 
-This patch adds:
+After copying:
 
-- Callback Requests navigation page
-- Pending, Contacted, and Completed follow-up statuses
-- Mark Contacted and Mark Completed actions
-- Callback summary counters
-- Callback CSV export
-- Automatic queue creation when Exotel digit `4` is received
-- Compatibility with older callback records
-- PATCH and DELETE CORS support
-
-No `.env` files or credentials are included.
+1. Run `npm install` inside `backend` and `dashboard`.
+2. Follow `AUTH_SETUP.md`.
+3. Add the four authentication environment variables in Render.
+4. Deploy both Render and Vercel.

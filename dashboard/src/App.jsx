@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useMemo,
@@ -1453,7 +1453,7 @@ function App() {
           <>
             <section className="page-hero dashboard-hero">
               <div>
-                <p className="page-eyebrow">Outbound IVR System</p>
+                <p className="page-eyebrow">Proactive Investor Communication System (PICS)</p>
                 <h1>Customer Call Dashboard</h1>
                 <p>
                   Manage customer numbers, launch campaigns and

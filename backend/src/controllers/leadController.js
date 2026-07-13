@@ -494,6 +494,51 @@ async function exportInterestedLeads(req, res) {
   }
 }
 
+async function deleteLead(req, res) {
+  try {
+    const { leadId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(leadId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customer ID",
+      });
+    }
+
+    const lead = await Lead.findById(leadId);
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+
+    if (["calling", "answered"].includes(lead.callStatus)) {
+      return res.status(409).json({
+        success: false,
+        message: "Wait for the active call to finish before deleting this customer",
+      });
+    }
+
+    await lead.deleteOne();
+
+    return res.status(200).json({
+      success: true,
+      message: "Customer deleted successfully",
+      leadId: String(lead._id),
+    });
+  } catch (error) {
+    console.error("Delete lead error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to delete customer",
+      error: error.message,
+    });
+  }
+}
+
 async function exportCampaignResults(req, res) {
   try {
     const rawLeadIds = Array.isArray(req.body?.leadIds)
@@ -608,6 +653,7 @@ async function exportCampaignResults(req, res) {
 
 module.exports = {
   createLead,
+  deleteLead,
   getLeads,
   uploadLeads,
   exportInterestedLeads,

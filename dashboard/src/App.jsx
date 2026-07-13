@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Search,
   Square,
+  Trash2,
   Upload,
   UserPlus,
   Users,
@@ -30,6 +31,7 @@ import {
 import {
   checkBackendHealth,
   createLead,
+  deleteLead,
   downloadCampaignResultsCsv,
   downloadInterestedCsv,
   getLeads,
@@ -172,7 +174,9 @@ function CustomerTable({
   statusFilter,
   onStatusChange,
   onStartCall,
+  onDeleteLead,
   callLoading,
+  deletingLeadId,
   campaignActive,
   backendConnected,
   compact = false,
@@ -335,26 +339,56 @@ function CustomerTable({
                     <td>{formatDate(lead.createdAt)}</td>
 
                     <td>
-                      <button
-                        className="table-call-button"
-                        type="button"
-                        onClick={() => onStartCall(lead)}
-                        disabled={
-                          !backendConnected ||
-                          callLoading ||
-                          campaignActive ||
-                          optedOut ||
-                          activeStatus
-                        }
-                      >
-                        <PhoneOutgoing size={15} />
+                      <div className="table-action-group">
+                        <button
+                          className="table-call-button"
+                          type="button"
+                          onClick={() => onStartCall(lead)}
+                          disabled={
+                            !backendConnected ||
+                            callLoading ||
+                            campaignActive ||
+                            optedOut ||
+                            activeStatus ||
+                            deletingLeadId === lead._id
+                          }
+                        >
+                          <PhoneOutgoing size={15} />
 
-                        {optedOut
-                          ? "Opted Out"
-                          : activeStatus
-                            ? "In Call"
-                            : "Start Call"}
-                      </button>
+                          {optedOut
+                            ? "Opted Out"
+                            : activeStatus
+                              ? "In Call"
+                              : "Start Call"}
+                        </button>
+
+                        <button
+                          className="table-delete-button"
+                          type="button"
+                          onClick={() => onDeleteLead(lead)}
+                          disabled={
+                            !backendConnected ||
+                            callLoading ||
+                            campaignActive ||
+                            activeStatus ||
+                            deletingLeadId === lead._id
+                          }
+                          aria-label={`Delete ${
+                            lead.name || "customer"
+                          }`}
+                          title={
+                            activeStatus
+                              ? "Wait for the active call to finish"
+                              : "Delete customer"
+                          }
+                        >
+                          {deletingLeadId === lead._id ? (
+                            <RefreshCw size={15} className="spin" />
+                          ) : (
+                            <Trash2 size={15} />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -408,6 +442,7 @@ function App() {
   const [addingLead, setAddingLead] = useState(false);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [message, setMessage] = useState(null);
 
   const showMessage = useCallback((type, text) => {
@@ -870,6 +905,66 @@ function App() {
     showMessage("success", "Campaign summary cleared");
   }
 
+  async function handleDeleteLead(lead) {
+    if (!backendConnected) {
+      showMessage("error", "Backend is disconnected");
+      return;
+    }
+
+    if (campaignActive) {
+      showMessage(
+        "error",
+        "Stop the campaign before deleting customers"
+      );
+      return;
+    }
+
+    if (!lead?._id) {
+      showMessage("error", "Customer ID is missing");
+      return;
+    }
+
+    if (ACTIVE_CALL_STATUSES.has(lead.callStatus)) {
+      showMessage(
+        "error",
+        "Wait for the active call to finish before deleting this customer"
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${lead.name || "this customer"}? This action cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingLeadId(lead._id);
+
+      const response = await deleteLead(lead._id);
+
+      setCampaignResultIds((currentIds) =>
+        currentIds.filter((leadId) => leadId !== lead._id)
+      );
+
+      showMessage(
+        "success",
+        response.message || "Customer deleted successfully"
+      );
+
+      await loadLeads({ silent: true });
+    } catch (error) {
+      showMessage(
+        "error",
+        error.message || "Unable to delete customer"
+      );
+    } finally {
+      setDeletingLeadId(null);
+    }
+  }
+
   async function handleStartLiveCall(lead) {
     if (!backendConnected) {
       showMessage("error", "Backend is disconnected");
@@ -1243,7 +1338,9 @@ function App() {
     statusFilter,
     onStatusChange: setStatusFilter,
     onStartCall: handleStartLiveCall,
+    onDeleteLead: handleDeleteLead,
     callLoading,
+    deletingLeadId,
     campaignActive,
     backendConnected,
   };

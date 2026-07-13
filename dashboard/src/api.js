@@ -121,6 +121,17 @@ export async function createLead(payload) {
   return handleResponse(response);
 }
 
+export async function deleteLead(leadId) {
+  const response = await request(
+    `${API_BASE_URL}/leads/${encodeURIComponent(leadId)}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  return handleResponse(response);
+}
+
 export async function uploadLeadCsv(file, batchName) {
   const formData = new FormData();
   formData.append("file", file);

@@ -2,6 +2,7 @@ const express = require("express");
 
 const {
   createLead,
+  deleteLead,
   exportCampaignResults,
   exportInterestedLeads,
   getLeads,
@@ -26,5 +27,8 @@ router.post("/", createLead);
 
 // Upload customers using CSV
 router.post("/upload", upload.single("file"), uploadLeads);
+
+// Delete one customer
+router.delete("/:leadId", deleteLead);
 
 module.exports = router;

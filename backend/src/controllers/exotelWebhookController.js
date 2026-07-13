@@ -364,6 +364,23 @@ async function handleExotelDigit(req, res) {
     lead.callStep = "completed";
     lead.lastCallError = null;
 
+    const now = new Date();
+
+    if (action.callbackRequested) {
+      lead.callbackFollowUpStatus = "pending";
+      lead.callbackRequestedAt = now;
+      lead.callbackContactedAt = null;
+      lead.callbackCompletedAt = null;
+    } else if (
+      action.optedOut &&
+      ["pending", "contacted"].includes(
+        lead.callbackFollowUpStatus
+      )
+    ) {
+      lead.callbackFollowUpStatus = "completed";
+      lead.callbackCompletedAt = now;
+    }
+
     lead.answers = {
       consent: action.optedOut ? "opted_out" : "yes",
       service: action.selectedService,

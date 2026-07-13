@@ -1,4 +1,4 @@
-﻿* {
+* {
   box-sizing: border-box;
 }
 
@@ -740,7 +740,7 @@ tbody tr:hover {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -950,6 +950,106 @@ tbody tr:hover {
 
 .campaign-summary-grid .stat-card {
   min-height: 142px;
+}
+
+/* Callback follow-up queue */
+
+.callback-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.callback-queue-card {
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.callback-table {
+  min-width: 1050px;
+}
+
+.followup-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.followup-pending {
+  color: #805d08;
+  border-color: #ead58f;
+  background: #fff4cf;
+}
+
+.followup-contacted {
+  color: #235f99;
+  border-color: #b9d4ee;
+  background: #e9f3ff;
+}
+
+.followup-completed {
+  color: #08734b;
+  border-color: #adddc6;
+  background: #def5e9;
+}
+
+.callback-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.callback-action-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.callback-action-button.contacted {
+  color: #225f98;
+  border: 1px solid #b8d3ee;
+  background: #edf6ff;
+}
+
+.callback-action-button.contacted:hover:not(:disabled) {
+  color: #fff;
+  border-color: #27699f;
+  background: #27699f;
+}
+
+.callback-action-button.completed {
+  color: #08724a;
+  border: 1px solid #acd9c3;
+  background: #ebf8f2;
+}
+
+.callback-action-button.completed:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.callback-completed-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #08734b;
+  font-size: 11px;
+  font-weight: 820;
+  white-space: nowrap;
 }
 
 /* Entry modal */
@@ -1390,7 +1490,8 @@ tbody tr:hover {
   }
 
   .stats-grid,
-  .campaign-summary-grid {
+  .campaign-summary-grid,
+  .callback-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
@@ -1435,7 +1536,8 @@ tbody tr:hover {
     justify-content: flex-start;
   }
 
-  .campaign-summary-grid {
+  .campaign-summary-grid,
+  .callback-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1481,8 +1583,18 @@ tbody tr:hover {
     width: 100%;
   }
 
+  .callback-action-group {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .callback-action-button {
+    width: 100%;
+  }
+
   .stats-grid,
-  .campaign-summary-grid {
+  .campaign-summary-grid,
+  .callback-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1513,6 +1625,7 @@ tbody tr:hover {
 
   .stats-grid,
   .campaign-summary-grid,
+  .callback-summary-grid,
   .call-result,
   .keypad-grid {
     grid-template-columns: 1fr;

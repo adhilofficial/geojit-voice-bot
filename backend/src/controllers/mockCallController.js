@@ -108,6 +108,26 @@ function getPrompt(lead) {
   }
 }
 
+function registerCallbackFollowUp(lead) {
+  const now = new Date();
+
+  lead.callbackFollowUpStatus = "pending";
+  lead.callbackRequestedAt = now;
+  lead.callbackContactedAt = null;
+  lead.callbackCompletedAt = null;
+}
+
+function completeCallbackFollowUpForOptOut(lead) {
+  if (
+    ["pending", "contacted"].includes(
+      lead.callbackFollowUpStatus
+    )
+  ) {
+    lead.callbackFollowUpStatus = "completed";
+    lead.callbackCompletedAt = new Date();
+  }
+}
+
 function calculateCallDuration(lead) {
   if (!lead.lastCalledAt) {
     return 0;
@@ -266,6 +286,7 @@ async function submitMockDigit(req, res) {
         lead.callStep = "completed";
         lead.selectedService = "not_interested";
         lead.callbackRequested = false;
+        completeCallbackFollowUpForOptOut(lead);
         lead.callDuration =
           calculateCallDuration(lead);
       } else {
@@ -289,6 +310,7 @@ async function submitMockDigit(req, res) {
 
       if (digit === "4") {
         lead.callbackRequested = true;
+        registerCallbackFollowUp(lead);
         lead.answers.callback = "yes";
         lead.callStatus = "completed";
         lead.callStep = "completed";
@@ -318,6 +340,11 @@ async function submitMockDigit(req, res) {
         digit === "1" ? "yes" : "no";
 
       lead.callbackRequested = digit === "1";
+
+      if (lead.callbackRequested) {
+        registerCallbackFollowUp(lead);
+      }
+
       lead.callStatus = "completed";
       lead.callStep = "completed";
       lead.callDuration =

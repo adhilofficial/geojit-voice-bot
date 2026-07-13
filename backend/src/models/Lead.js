@@ -91,6 +91,25 @@ const leadSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    callbackFollowUpStatus: {
+      type: String,
+      enum: ["pending", "contacted", "completed", null],
+      default: null,
+      index: true,
+    },
+    callbackRequestedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    callbackContactedAt: {
+      type: Date,
+      default: null,
+    },
+    callbackCompletedAt: {
+      type: Date,
+      default: null,
+    },
     optedOut: {
       type: Boolean,
       default: false,

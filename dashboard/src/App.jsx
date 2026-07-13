@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -8,6 +8,8 @@
 
 import {
   CheckCircle2,
+  ClipboardList,
+  Clock3,
   Download,
   FileSpreadsheet,
   LayoutDashboard,
@@ -22,6 +24,7 @@ import {
   Square,
   Trash2,
   Upload,
+  UserCheck,
   UserPlus,
   Users,
   X,
@@ -32,11 +35,14 @@ import {
   checkBackendHealth,
   createLead,
   deleteLead,
+  downloadCallbackRequestsCsv,
   downloadCampaignResultsCsv,
   downloadInterestedCsv,
+  getCallbackRequests,
   getLeads,
   startLiveCall,
   syncLiveCall,
+  updateCallbackFollowUpStatus,
   uploadLeadCsv,
 } from "./api";
 
@@ -65,6 +71,12 @@ const serviceLabels = {
   trading_account: "Trading Account",
   callback: "Callback Request",
   not_interested: "Not Interested",
+};
+
+const callbackStatusLabels = {
+  pending: "Pending",
+  contacted: "Contacted",
+  completed: "Completed",
 };
 
 const ACTIVE_CALL_STATUSES = new Set(["calling", "answered"]);
@@ -401,6 +413,210 @@ function CustomerTable({
   );
 }
 
+function CallbackQueue({
+  callbacks,
+  loading,
+  search,
+  onSearchChange,
+  statusFilter,
+  onStatusChange,
+  onUpdateStatus,
+  updatingCallbackId,
+  backendConnected,
+}) {
+  return (
+    <section className="data-card callback-queue-card">
+      <div className="customer-table-toolbar">
+        <div>
+          <p className="section-kicker">Follow-up workspace</p>
+          <h2>Callback Requests</h2>
+          <p>
+            Contact customers who requested a call from a Geojit
+            representative.
+          </p>
+        </div>
+
+        <div className="customer-table-actions">
+          <div className="search-control">
+            <Search size={18} />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) =>
+                onSearchChange(event.target.value)
+              }
+              placeholder="Search name, phone or campaign"
+              aria-label="Search callback requests"
+            />
+          </div>
+
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              onStatusChange(event.target.value)
+            }
+            aria-label="Filter callback requests by follow-up status"
+          >
+            <option value="">All follow-ups</option>
+            <option value="pending">Pending</option>
+            <option value="contacted">Contacted</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="table-wrapper callback-table-wrapper">
+        <table className="callback-table">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Phone</th>
+              <th>Campaign</th>
+              <th>Requested At</th>
+              <th>Service</th>
+              <th>Follow-up Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan="7" className="empty-state">
+                  <div className="empty-state-icon">
+                    <RefreshCw size={22} className="spin" />
+                  </div>
+                  Loading callback requests...
+                </td>
+              </tr>
+            ) : callbacks.length === 0 ? (
+              <tr>
+                <td colSpan="7" className="empty-state">
+                  <div className="empty-state-icon">
+                    <PhoneCall size={22} />
+                  </div>
+                  No callback requests match the selected filters.
+                </td>
+              </tr>
+            ) : (
+              callbacks.map((lead) => {
+                const followUpStatus =
+                  lead.callbackFollowUpStatus || "pending";
+                const updating = updatingCallbackId === lead._id;
+
+                return (
+                  <tr key={lead._id}>
+                    <td>
+                      <div className="customer-cell">
+                        <div className="customer-avatar">
+                          {(lead.name || "C")
+                            .charAt(0)
+                            .toUpperCase()}
+                        </div>
+
+                        <div>
+                          <strong>
+                            {lead.name || "Unknown Customer"}
+                          </strong>
+                          <span>
+                            {lead.source === "csv"
+                              ? "CSV upload"
+                              : "Manual entry"}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="phone-cell">
+                      {formatPhone(lead.phone)}
+                    </td>
+                    <td>{lead.batchName || "Manual Entry"}</td>
+                    <td>
+                      {formatDate(
+                        lead.callbackRequestedAt ||
+                          lead.lastCalledAt ||
+                          lead.updatedAt
+                      )}
+                    </td>
+                    <td>
+                      {serviceLabels[lead.selectedService] ||
+                        "Callback Request"}
+                    </td>
+                    <td>
+                      <span
+                        className={`followup-badge followup-${followUpStatus}`}
+                      >
+                        {callbackStatusLabels[followUpStatus] ||
+                          followUpStatus}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="callback-action-group">
+                        {followUpStatus === "pending" && (
+                          <button
+                            className="callback-action-button contacted"
+                            type="button"
+                            onClick={() =>
+                              onUpdateStatus(lead, "contacted")
+                            }
+                            disabled={
+                              !backendConnected || updating
+                            }
+                          >
+                            {updating ? (
+                              <RefreshCw
+                                size={15}
+                                className="spin"
+                              />
+                            ) : (
+                              <UserCheck size={15} />
+                            )}
+                            Mark Contacted
+                          </button>
+                        )}
+
+                        {followUpStatus !== "completed" && (
+                          <button
+                            className="callback-action-button completed"
+                            type="button"
+                            onClick={() =>
+                              onUpdateStatus(lead, "completed")
+                            }
+                            disabled={
+                              !backendConnected || updating
+                            }
+                          >
+                            {updating ? (
+                              <RefreshCw
+                                size={15}
+                                className="spin"
+                              />
+                            ) : (
+                              <CheckCircle2 size={15} />
+                            )}
+                            Mark Completed
+                          </button>
+                        )}
+
+                        {followUpStatus === "completed" && (
+                          <span className="callback-completed-label">
+                            <CheckCircle2 size={15} />
+                            Follow-up complete
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const messageTimerRef = useRef(null);
   const campaignRunIdRef = useRef(0);
@@ -433,6 +649,22 @@ function App() {
     loadStoredCampaignResultIds
   );
   const [exportingCampaign, setExportingCampaign] =
+    useState(false);
+
+  const [callbacks, setCallbacks] = useState([]);
+  const [callbackSummary, setCallbackSummary] = useState({
+    total: 0,
+    pending: 0,
+    contacted: 0,
+    completed: 0,
+  });
+  const [callbackLoading, setCallbackLoading] = useState(true);
+  const [callbackSearch, setCallbackSearch] = useState("");
+  const [callbackStatusFilter, setCallbackStatusFilter] =
+    useState("");
+  const [updatingCallbackId, setUpdatingCallbackId] =
+    useState(null);
+  const [exportingCallbacks, setExportingCallbacks] =
     useState(false);
 
   const [statusFilter, setStatusFilter] = useState("");
@@ -499,9 +731,46 @@ function App() {
     [showMessage]
   );
 
+  const loadCallbacks = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        if (!silent) {
+          setCallbackLoading(true);
+        }
+
+        const response = await getCallbackRequests({ limit: 500 });
+
+        setCallbacks(response.callbacks || []);
+        setCallbackSummary(
+          response.summary || {
+            total: 0,
+            pending: 0,
+            contacted: 0,
+            completed: 0,
+          }
+        );
+        setBackendConnected(true);
+      } catch (error) {
+        setBackendConnected(false);
+
+        if (!silent) {
+          showMessage(
+            "error",
+            error.message || "Unable to load callback requests"
+          );
+        }
+      } finally {
+        if (!silent) {
+          setCallbackLoading(false);
+        }
+      }
+    },
+    [showMessage]
+  );
+
   useEffect(() => {
-    loadLeads();
-  }, [loadLeads]);
+    void Promise.all([loadLeads(), loadCallbacks()]);
+  }, [loadCallbacks, loadLeads]);
 
   useEffect(() => {
     checkConnection();
@@ -566,7 +835,10 @@ function App() {
           )
         );
 
-        await loadLeads({ silent: true });
+        await Promise.all([
+          loadLeads({ silent: true }),
+          loadCallbacks({ silent: true }),
+        ]);
       } finally {
         refreshRunning = false;
       }
@@ -582,7 +854,7 @@ function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [campaignActive, leads, loadLeads]);
+  }, [campaignActive, leads, loadCallbacks, loadLeads]);
 
   const filteredLeads = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -606,6 +878,35 @@ function App() {
       return matchesStatus && matchesSearch;
     });
   }, [leads, search, statusFilter]);
+
+  const filteredCallbacks = useMemo(() => {
+    const query = callbackSearch.trim().toLowerCase();
+
+    return callbacks.filter((lead) => {
+      const followUpStatus =
+        lead.callbackFollowUpStatus || "pending";
+      const matchesStatus =
+        !callbackStatusFilter ||
+        followUpStatus === callbackStatusFilter;
+      const matchesSearch =
+        !query ||
+        String(lead.name || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(lead.phone || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(lead.batchName || "")
+          .toLowerCase()
+          .includes(query);
+
+      return matchesStatus && matchesSearch;
+    });
+  }, [
+    callbackSearch,
+    callbackStatusFilter,
+    callbacks,
+  ]);
 
   const statistics = useMemo(() => {
     return {
@@ -869,6 +1170,70 @@ function App() {
     }
   }
 
+  async function handleExportCallbacks() {
+    if (!backendConnected) {
+      showMessage("error", "Backend is disconnected");
+      return;
+    }
+
+    try {
+      setExportingCallbacks(true);
+      await downloadCallbackRequestsCsv({
+        status: callbackStatusFilter,
+        search: callbackSearch.trim(),
+      });
+      showMessage(
+        "success",
+        "Callback requests exported successfully"
+      );
+    } catch (error) {
+      showMessage(
+        "error",
+        error.message || "Unable to export callback requests"
+      );
+    } finally {
+      setExportingCallbacks(false);
+    }
+  }
+
+  async function handleUpdateCallbackStatus(lead, status) {
+    if (!backendConnected) {
+      showMessage("error", "Backend is disconnected");
+      return;
+    }
+
+    if (!lead?._id) {
+      showMessage("error", "Customer ID is missing");
+      return;
+    }
+
+    try {
+      setUpdatingCallbackId(lead._id);
+
+      const response = await updateCallbackFollowUpStatus(
+        lead._id,
+        status
+      );
+
+      showMessage(
+        "success",
+        response.message || "Callback status updated"
+      );
+
+      await Promise.all([
+        loadCallbacks({ silent: true }),
+        loadLeads({ silent: true }),
+      ]);
+    } catch (error) {
+      showMessage(
+        "error",
+        error.message || "Unable to update callback status"
+      );
+    } finally {
+      setUpdatingCallbackId(null);
+    }
+  }
+
   async function handleExportCampaignResults() {
     if (!backendConnected) {
       showMessage("error", "Backend is disconnected");
@@ -954,7 +1319,10 @@ function App() {
         response.message || "Customer deleted successfully"
       );
 
-      await loadLeads({ silent: true });
+      await Promise.all([
+        loadLeads({ silent: true }),
+        loadCallbacks({ silent: true }),
+      ]);
     } catch (error) {
       showMessage(
         "error",
@@ -1226,7 +1594,10 @@ function App() {
     }
 
     resetCampaignState();
-    await loadLeads({ silent: true });
+    await Promise.all([
+      loadLeads({ silent: true }),
+      loadCallbacks({ silent: true }),
+    ]);
     showMessage("success", "Live campaign completed successfully");
   }
 
@@ -1319,7 +1690,10 @@ function App() {
     );
 
     if (backendConnected) {
-      await loadLeads({ silent: true });
+      await Promise.all([
+        loadLeads({ silent: true }),
+        loadCallbacks({ silent: true }),
+      ]);
     }
   }
 
@@ -1327,6 +1701,7 @@ function App() {
     await Promise.allSettled([
       checkConnection(),
       loadLeads(),
+      loadCallbacks(),
     ]);
   }
 
@@ -1385,6 +1760,17 @@ function App() {
             >
               <Megaphone size={17} />
               Call Campaigns
+            </button>
+
+            <button
+              className={
+                activeView === "callbacks" ? "active" : ""
+              }
+              type="button"
+              onClick={() => setActiveView("callbacks")}
+            >
+              <ClipboardList size={17} />
+              Callback Requests
             </button>
 
             <button
@@ -1453,7 +1839,7 @@ function App() {
           <>
             <section className="page-hero dashboard-hero">
               <div>
-                <p className="page-eyebrow">Proactive Investor Communication System (PICS)</p>
+                <p className="page-eyebrow">Proactive Investor Communication System </p>
                 <h1>Customer Call Dashboard</h1>
                 <p>
                   Manage customer numbers, launch campaigns and
@@ -1527,6 +1913,12 @@ function App() {
                 label="Failed / No Answer"
                 value={statistics.failed}
                 tone="red"
+              />
+              <StatCard
+                icon={<Clock3 size={21} />}
+                label="Pending Follow-ups"
+                value={callbackSummary.pending}
+                tone="amber"
               />
             </section>
           </>
@@ -1717,6 +2109,77 @@ function App() {
               {...tableProps}
               title="Campaign Customers"
               subtitle="Review pending, completed and failed campaign calls."
+            />
+          </>
+        )}
+
+        {activeView === "callbacks" && (
+          <>
+            <section className="page-hero compact-hero">
+              <div>
+                <p className="page-eyebrow">Follow-up workspace</p>
+                <h1>Callback Requests</h1>
+                <p>
+                  Track customers who asked for a representative
+                  callback and complete every follow-up.
+                </p>
+              </div>
+
+              <div className="hero-inline-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={handleExportCallbacks}
+                  disabled={
+                    !backendConnected ||
+                    exportingCallbacks ||
+                    callbackSummary.total === 0
+                  }
+                >
+                  <Download size={17} />
+                  {exportingCallbacks
+                    ? "Exporting..."
+                    : "Export Callback List"}
+                </button>
+              </div>
+            </section>
+
+            <section className="callback-summary-grid">
+              <StatCard
+                icon={<ClipboardList size={21} />}
+                label="Total Requests"
+                value={callbackSummary.total}
+              />
+              <StatCard
+                icon={<Clock3 size={21} />}
+                label="Pending"
+                value={callbackSummary.pending}
+                tone="amber"
+              />
+              <StatCard
+                icon={<UserCheck size={21} />}
+                label="Contacted"
+                value={callbackSummary.contacted}
+                tone="blue"
+              />
+              <StatCard
+                icon={<CheckCircle2 size={21} />}
+                label="Completed"
+                value={callbackSummary.completed}
+                tone="purple"
+              />
+            </section>
+
+            <CallbackQueue
+              callbacks={filteredCallbacks}
+              loading={callbackLoading}
+              search={callbackSearch}
+              onSearchChange={setCallbackSearch}
+              statusFilter={callbackStatusFilter}
+              onStatusChange={setCallbackStatusFilter}
+              onUpdateStatus={handleUpdateCallbackStatus}
+              updatingCallbackId={updatingCallbackId}
+              backendConnected={backendConnected}
             />
           </>
         )}

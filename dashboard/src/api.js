@@ -232,6 +232,76 @@ export async function downloadInterestedCsv() {
   );
 }
 
+export async function getCallbackRequests(params = {}) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const response = await request(
+    `${API_BASE_URL}/leads/callbacks${query ? `?${query}` : ""}`
+  );
+
+  return handleResponse(response);
+}
+
+export async function updateCallbackFollowUpStatus(
+  leadId,
+  status
+) {
+  const response = await request(
+    `${API_BASE_URL}/leads/${encodeURIComponent(
+      leadId
+    )}/callback-status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+export async function downloadCallbackRequestsCsv(
+  params = {}
+) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const response = await request(
+    `${API_BASE_URL}/leads/export/callbacks${
+      query ? `?${query}` : ""
+    }`
+  );
+  const date = new Date().toISOString().slice(0, 10);
+
+  await downloadCsvResponse(
+    response,
+    `geojit-callback-requests-${date}.csv`
+  );
+}
+
 export async function downloadCampaignResultsCsv(leadIds) {
   const response = await request(
     `${API_BASE_URL}/leads/export/campaign`,

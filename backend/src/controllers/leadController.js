@@ -35,6 +35,90 @@ const exportServiceLabels = {
   not_interested: "Not Interested",
 };
 
+const allowedCallbackStatuses = new Set([
+  "pending",
+  "contacted",
+  "completed",
+]);
+
+function getCallbackBaseFilter(status = "") {
+  if (status === "pending") {
+    return {
+      $or: [
+        { callbackFollowUpStatus: "pending" },
+        {
+          callbackFollowUpStatus: null,
+          callbackRequested: true,
+        },
+      ],
+    };
+  }
+
+  if (status === "contacted" || status === "completed") {
+    return { callbackFollowUpStatus: status };
+  }
+
+  return {
+    $or: [
+      {
+        callbackFollowUpStatus: {
+          $in: ["pending", "contacted", "completed"],
+        },
+      },
+      {
+        callbackFollowUpStatus: null,
+        callbackRequested: true,
+      },
+    ],
+  };
+}
+
+function getSearchFilter(search) {
+  const normalizedSearch = cleanText(search);
+
+  if (!normalizedSearch) {
+    return null;
+  }
+
+  const safeSearch = escapeRegex(normalizedSearch);
+
+  return {
+    $or: [
+      { name: { $regex: safeSearch, $options: "i" } },
+      { phone: { $regex: safeSearch, $options: "i" } },
+      { batchName: { $regex: safeSearch, $options: "i" } },
+    ],
+  };
+}
+
+function buildCallbackFilter(status, search) {
+  const filters = [getCallbackBaseFilter(status)];
+  const searchFilter = getSearchFilter(search);
+
+  if (searchFilter) {
+    filters.push(searchFilter);
+  }
+
+  return filters.length === 1 ? filters[0] : { $and: filters };
+}
+
+function normalizeCallbackLead(lead) {
+  const followUpStatus =
+    lead.callbackFollowUpStatus ||
+    (lead.callbackRequested ? "pending" : null);
+
+  return {
+    ...lead,
+    callbackFollowUpStatus: followUpStatus,
+    callbackRequestedAt:
+      lead.callbackRequestedAt ||
+      lead.lastCalledAt ||
+      lead.updatedAt ||
+      lead.createdAt ||
+      null,
+  };
+}
+
 function normalizeCsvRow(row) {
   const normalized = {};
 
@@ -651,11 +735,227 @@ async function exportCampaignResults(req, res) {
   }
 }
 
+async function getCallbackRequests(req, res) {
+  try {
+    const { status = "", search = "", page = 1, limit = 100 } =
+      req.query;
+
+    if (status && !allowedCallbackStatuses.has(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid callback follow-up status",
+      });
+    }
+
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const pageLimit = Math.min(
+      Math.max(Number(limit) || 100, 1),
+      500
+    );
+    const skip = (pageNumber - 1) * pageLimit;
+    const filter = buildCallbackFilter(status, search);
+
+    const [callbacks, total, pending, contacted, completed] =
+      await Promise.all([
+        Lead.find(filter)
+          .sort({ callbackRequestedAt: -1, updatedAt: -1 })
+          .skip(skip)
+          .limit(pageLimit)
+          .lean(),
+        Lead.countDocuments(filter),
+        Lead.countDocuments(getCallbackBaseFilter("pending")),
+        Lead.countDocuments(getCallbackBaseFilter("contacted")),
+        Lead.countDocuments(getCallbackBaseFilter("completed")),
+      ]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      page: pageNumber,
+      pages: Math.ceil(total / pageLimit),
+      summary: {
+        total: pending + contacted + completed,
+        pending,
+        contacted,
+        completed,
+      },
+      callbacks: callbacks.map(normalizeCallbackLead),
+    });
+  } catch (error) {
+    console.error("Get callback requests error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve callback requests",
+      error: error.message,
+    });
+  }
+}
+
+async function updateCallbackStatus(req, res) {
+  try {
+    const { leadId } = req.params;
+    const status = cleanText(req.body?.status).toLowerCase();
+
+    if (!mongoose.Types.ObjectId.isValid(leadId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customer ID",
+      });
+    }
+
+    if (!allowedCallbackStatuses.has(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be pending, contacted, or completed",
+      });
+    }
+
+    const lead = await Lead.findById(leadId);
+
+    if (!lead) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+
+    const hasCallbackRequest = Boolean(
+      lead.callbackRequested ||
+        lead.selectedService === "callback" ||
+        lead.callbackFollowUpStatus
+    );
+
+    if (!hasCallbackRequest) {
+      return res.status(400).json({
+        success: false,
+        message: "This customer has no callback request",
+      });
+    }
+
+    const now = new Date();
+
+    lead.callbackFollowUpStatus = status;
+    lead.callbackRequestedAt =
+      lead.callbackRequestedAt || lead.lastCalledAt || now;
+
+    if (status === "pending") {
+      lead.callbackContactedAt = null;
+      lead.callbackCompletedAt = null;
+    }
+
+    if (status === "contacted") {
+      lead.callbackContactedAt = now;
+      lead.callbackCompletedAt = null;
+    }
+
+    if (status === "completed") {
+      lead.callbackCompletedAt = now;
+    }
+
+    await lead.save();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        status === "contacted"
+          ? "Callback marked as contacted"
+          : status === "completed"
+            ? "Callback marked as completed"
+            : "Callback moved back to pending",
+      callback: normalizeCallbackLead(lead.toObject()),
+    });
+  } catch (error) {
+    console.error("Update callback status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update callback follow-up status",
+      error: error.message,
+    });
+  }
+}
+
+async function exportCallbackRequests(req, res) {
+  try {
+    const { status = "", search = "" } = req.query;
+
+    if (status && !allowedCallbackStatuses.has(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid callback follow-up status",
+      });
+    }
+
+    const callbacks = await Lead.find(
+      buildCallbackFilter(status, search)
+    )
+      .sort({ callbackRequestedAt: -1, updatedAt: -1 })
+      .limit(5000)
+      .lean();
+
+    const headers = [
+      "Customer Name",
+      "Phone Number",
+      "Campaign",
+      "Selected Service",
+      "Follow-up Status",
+      "Requested At",
+      "Contacted At",
+      "Completed At",
+      "Last Called",
+      "Call Status",
+    ];
+
+    const rows = callbacks.map((rawLead) => {
+      const lead = normalizeCallbackLead(rawLead);
+
+      return [
+        lead.name || "Unknown Customer",
+        lead.phone || "",
+        lead.batchName || "",
+        exportServiceLabels[lead.selectedService] ||
+          "Callback Request",
+        lead.callbackFollowUpStatus || "pending",
+        formatExportDate(lead.callbackRequestedAt),
+        formatExportDate(lead.callbackContactedAt),
+        formatExportDate(lead.callbackCompletedAt),
+        formatExportDate(lead.lastCalledAt),
+        lead.callStatus || "",
+      ];
+    });
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map(escapeCsvValue).join(","))
+      .join("\r\n");
+    const date = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="geojit-callback-requests-${date}.csv"`
+    );
+
+    return res.status(200).send(`\uFEFF${csvContent}`);
+  } catch (error) {
+    console.error("Export callback requests error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to export callback requests",
+      error: error.message,
+    });
+  }
+}
+
 module.exports = {
   createLead,
   deleteLead,
-  getLeads,
-  uploadLeads,
-  exportInterestedLeads,
+  exportCallbackRequests,
   exportCampaignResults,
+  exportInterestedLeads,
+  getCallbackRequests,
+  getLeads,
+  updateCallbackStatus,
+  uploadLeads,
 };

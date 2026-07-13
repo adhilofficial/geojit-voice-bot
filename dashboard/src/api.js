@@ -56,6 +56,38 @@ async function handleResponse(response) {
   return data;
 }
 
+async function downloadCsvResponse(response, fallbackFilename) {
+  if (!response.ok) {
+    let message = "Unable to download CSV file";
+
+    try {
+      const data = await response.json();
+      message = data.message || message;
+    } catch {
+      // Keep the default message.
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = URL.createObjectURL(blob);
+  const contentDisposition =
+    response.headers.get("content-disposition") || "";
+  const filenameMatch = contentDisposition.match(
+    /filename="?([^";]+)"?/i
+  );
+  const link = document.createElement("a");
+
+  link.href = downloadUrl;
+  link.download = filenameMatch?.[1] || fallbackFilename;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
 export async function getLeads(params = {}) {
   const searchParams = new URLSearchParams();
 
@@ -181,32 +213,33 @@ export async function downloadInterestedCsv() {
   const response = await request(
     `${API_BASE_URL}/leads/export/interested`
   );
-
-  if (!response.ok) {
-    let message = "Unable to export interested customers";
-
-    try {
-      const data = await response.json();
-      message = data.message || message;
-    } catch {
-      // Keep the default message.
-    }
-
-    throw new Error(message);
-  }
-
-  const blob = await response.blob();
-  const downloadUrl = URL.createObjectURL(blob);
   const date = new Date().toISOString().slice(0, 10);
-  const link = document.createElement("a");
 
-  link.href = downloadUrl;
-  link.download = `geojit-interested-customers-${date}.csv`;
+  await downloadCsvResponse(
+    response,
+    `geojit-interested-customers-${date}.csv`
+  );
+}
 
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(downloadUrl);
+export async function downloadCampaignResultsCsv(leadIds) {
+  const response = await request(
+    `${API_BASE_URL}/leads/export/campaign`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        leadIds,
+      }),
+    }
+  );
+  const date = new Date().toISOString().slice(0, 10);
+
+  await downloadCsvResponse(
+    response,
+    `geojit-campaign-results-${date}.csv`
+  );
 }
 
 export async function checkBackendHealth() {

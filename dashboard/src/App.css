@@ -865,6 +865,57 @@ tbody tr:hover {
   transition: width 0.3s ease;
 }
 
+/* Campaign result summary */
+
+.campaign-summary-card {
+  margin-bottom: 24px;
+  overflow: hidden;
+  border: 1px solid rgba(202, 218, 210, 0.92);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.campaign-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px;
+  border-bottom: 1px solid #e4ece7;
+}
+
+.campaign-summary-header h2 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.campaign-summary-header > div:first-child > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.campaign-summary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.campaign-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 24px;
+}
+
+.campaign-summary-grid .stat-card {
+  min-height: 142px;
+}
+
 /* Entry modal */
 
 .entry-modal-backdrop {
@@ -1302,7 +1353,8 @@ tbody tr:hover {
     width: 100%;
   }
 
-  .stats-grid {
+  .stats-grid,
+  .campaign-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
@@ -1335,6 +1387,20 @@ tbody tr:hover {
 
   .campaign-command-progress {
     grid-column: 1 / -1;
+  }
+
+  .campaign-summary-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .campaign-summary-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .campaign-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1370,7 +1436,17 @@ tbody tr:hover {
     width: 100%;
   }
 
-  .stats-grid {
+  .campaign-summary-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .campaign-summary-actions button {
+    width: 100%;
+  }
+
+  .stats-grid,
+  .campaign-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1400,6 +1476,7 @@ tbody tr:hover {
   }
 
   .stats-grid,
+  .campaign-summary-grid,
   .call-result,
   .keypad-grid {
     grid-template-columns: 1fr;

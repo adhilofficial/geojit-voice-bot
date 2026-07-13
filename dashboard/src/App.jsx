@@ -30,6 +30,7 @@ import {
 import {
   checkBackendHealth,
   createLead,
+  downloadCampaignResultsCsv,
   downloadInterestedCsv,
   getLeads,
   startLiveCall,
@@ -86,6 +87,31 @@ const CAMPAIGN_MAX_CUSTOMERS =
 const CAMPAIGN_POLL_INTERVAL_MS = 5000;
 const CAMPAIGN_DELAY_SECONDS = 20;
 const CAMPAIGN_MAX_WAIT_MS = 6 * 60 * 1000;
+const CAMPAIGN_RESULTS_STORAGE_KEY =
+  "geojit:last-campaign-result-ids";
+
+function loadStoredCampaignResultIds() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(
+      CAMPAIGN_RESULTS_STORAGE_KEY
+    );
+    const parsedValue = storedValue
+      ? JSON.parse(storedValue)
+      : [];
+
+    return Array.isArray(parsedValue)
+      ? parsedValue
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function wait(milliseconds) {
   return new Promise((resolve) => {
@@ -369,6 +395,11 @@ function App() {
   const [campaignPhase, setCampaignPhase] = useState("idle");
   const [campaignSecondsRemaining, setCampaignSecondsRemaining] =
     useState(0);
+  const [campaignResultIds, setCampaignResultIds] = useState(
+    loadStoredCampaignResultIds
+  );
+  const [exportingCampaign, setExportingCampaign] =
+    useState(false);
 
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -458,6 +489,17 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        CAMPAIGN_RESULTS_STORAGE_KEY,
+        JSON.stringify(campaignResultIds)
+      );
+    } catch {
+      // The dashboard still works when browser storage is unavailable.
+    }
+  }, [campaignResultIds]);
 
   useEffect(() => {
     const activeLiveLeads = !campaignActive
@@ -556,6 +598,50 @@ function App() {
       ).length,
     };
   }, [leads]);
+
+  const campaignResultLeads = useMemo(() => {
+    const resultIdSet = new Set(campaignResultIds);
+
+    return leads.filter((lead) => resultIdSet.has(lead._id));
+  }, [campaignResultIds, leads]);
+
+  const campaignSummary = useMemo(() => {
+    const interestedServices = new Set([
+      "mutual_fund",
+      "sip",
+      "trading_account",
+      "callback",
+    ]);
+
+    return {
+      total: campaignResultIds.length,
+      completed: campaignResultLeads.filter(
+        (lead) => lead.callStatus === "completed"
+      ).length,
+      interested: campaignResultLeads.filter(
+        (lead) =>
+          lead.callbackRequested === true ||
+          interestedServices.has(lead.selectedService)
+      ).length,
+      callbacks: campaignResultLeads.filter(
+        (lead) => lead.callbackRequested === true
+      ).length,
+      noAnswer: campaignResultLeads.filter(
+        (lead) => lead.callStatus === "no_answer"
+      ).length,
+      busy: campaignResultLeads.filter(
+        (lead) => lead.callStatus === "busy"
+      ).length,
+      failed: campaignResultLeads.filter(
+        (lead) => lead.callStatus === "failed"
+      ).length,
+      optedOut: campaignResultLeads.filter(
+        (lead) =>
+          lead.optedOut === true ||
+          lead.callStatus === "opted_out"
+      ).length,
+    };
+  }, [campaignResultIds.length, campaignResultLeads]);
 
   const campaignTotal = campaignQueue.length;
   const campaignPosition =
@@ -748,6 +834,42 @@ function App() {
     }
   }
 
+  async function handleExportCampaignResults() {
+    if (!backendConnected) {
+      showMessage("error", "Backend is disconnected");
+      return;
+    }
+
+    if (campaignResultIds.length === 0) {
+      showMessage(
+        "error",
+        "Run a campaign before exporting campaign results"
+      );
+      return;
+    }
+
+    try {
+      setExportingCampaign(true);
+      await downloadCampaignResultsCsv(campaignResultIds);
+      showMessage(
+        "success",
+        "Campaign results exported successfully"
+      );
+    } catch (error) {
+      showMessage(
+        "error",
+        error.message || "Unable to export campaign results"
+      );
+    } finally {
+      setExportingCampaign(false);
+    }
+  }
+
+  function handleClearCampaignResults() {
+    setCampaignResultIds([]);
+    showMessage("success", "Campaign summary cleared");
+  }
+
   async function handleStartLiveCall(lead) {
     if (!backendConnected) {
       showMessage("error", "Backend is disconnected");
@@ -923,6 +1045,12 @@ function App() {
 
       let callWasStarted = false;
 
+      setCampaignResultIds((currentIds) =>
+        currentIds.includes(lead._id)
+          ? currentIds
+          : [...currentIds, lead._id]
+      );
+
       try {
         await startLiveCall(lead._id);
         callWasStarted = true;
@@ -1058,6 +1186,7 @@ function App() {
       const runId = campaignRunIdRef.current + 1;
       campaignRunIdRef.current = runId;
 
+      setCampaignResultIds([]);
       setCampaignQueue(campaignCustomers);
       setCampaignIndex(0);
       setCampaignPhase("starting");
@@ -1393,6 +1522,99 @@ function App() {
                 </div>
               </div>
             </section>
+
+            {campaignResultIds.length > 0 && (
+              <section className="campaign-summary-card">
+                <div className="campaign-summary-header">
+                  <div>
+                    <p className="section-kicker">Latest campaign</p>
+                    <h2>Campaign Result Summary</h2>
+                    <p>
+                      Live results for {campaignSummary.total} attempted
+                      customer{campaignSummary.total === 1 ? "" : "s"}.
+                    </p>
+                  </div>
+
+                  <div className="campaign-summary-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={handleClearCampaignResults}
+                      disabled={campaignActive || exportingCampaign}
+                    >
+                      <X size={17} />
+                      Clear Summary
+                    </button>
+
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={handleExportCampaignResults}
+                      disabled={
+                        !backendConnected ||
+                        exportingCampaign ||
+                        campaignResultIds.length === 0
+                      }
+                    >
+                      <Download size={17} />
+                      {exportingCampaign
+                        ? "Exporting..."
+                        : "Export Campaign Results"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="campaign-summary-grid">
+                  <StatCard
+                    icon={<Users size={20} />}
+                    label="Total Called"
+                    value={campaignSummary.total}
+                  />
+                  <StatCard
+                    icon={<CheckCircle2 size={20} />}
+                    label="Completed"
+                    value={campaignSummary.completed}
+                    tone="blue"
+                  />
+                  <StatCard
+                    icon={<PhoneCall size={20} />}
+                    label="Interested"
+                    value={campaignSummary.interested}
+                    tone="purple"
+                  />
+                  <StatCard
+                    icon={<Phone size={20} />}
+                    label="Callback Requests"
+                    value={campaignSummary.callbacks}
+                    tone="amber"
+                  />
+                  <StatCard
+                    icon={<PhoneOutgoing size={20} />}
+                    label="No Answer"
+                    value={campaignSummary.noAnswer}
+                    tone="amber"
+                  />
+                  <StatCard
+                    icon={<Phone size={20} />}
+                    label="Busy"
+                    value={campaignSummary.busy}
+                    tone="purple"
+                  />
+                  <StatCard
+                    icon={<XCircle size={20} />}
+                    label="Failed"
+                    value={campaignSummary.failed}
+                    tone="red"
+                  />
+                  <StatCard
+                    icon={<XCircle size={20} />}
+                    label="Opted Out"
+                    value={campaignSummary.optedOut}
+                    tone="red"
+                  />
+                </div>
+              </section>
+            )}
 
             <CustomerTable
               {...tableProps}

@@ -2,6 +2,7 @@ const express = require("express");
 
 const {
   createLead,
+  exportCampaignResults,
   exportInterestedLeads,
   getLeads,
   uploadLeads,
@@ -11,11 +12,11 @@ const upload = require("../middleware/upload");
 
 const router = express.Router();
 
+// Export the customers attempted in the latest campaign
+router.post("/export/campaign", exportCampaignResults);
+
 // Export interested customers
-router.get(
-  "/export/interested",
-  exportInterestedLeads
-);
+router.get("/export/interested", exportInterestedLeads);
 
 // Retrieve customers
 router.get("/", getLeads);
@@ -24,10 +25,6 @@ router.get("/", getLeads);
 router.post("/", createLead);
 
 // Upload customers using CSV
-router.post(
-  "/upload",
-  upload.single("file"),
-  uploadLeads
-);
+router.post("/upload", upload.single("file"), uploadLeads);
 
 module.exports = router;

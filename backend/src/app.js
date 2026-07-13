@@ -51,7 +51,7 @@ app.use(
 app.use(
   morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
     skip(req) {
-      return req.path === "/api/webhooks/exotel/status";
+      return req.path.startsWith("/api/webhooks/exotel/");
     },
   })
 );

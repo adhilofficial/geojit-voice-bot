@@ -1,5 +1,6 @@
 const fs = require("fs");
 const csv = require("csv-parser");
+const mongoose = require("mongoose");
 
 const Lead = require("../models/Lead");
 const normalizePhone = require("../utils/normalizePhone");
@@ -493,9 +494,122 @@ async function exportInterestedLeads(req, res) {
   }
 }
 
+async function exportCampaignResults(req, res) {
+  try {
+    const rawLeadIds = Array.isArray(req.body?.leadIds)
+      ? req.body.leadIds
+      : [];
+
+    const uniqueLeadIds = Array.from(
+      new Set(
+        rawLeadIds
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (uniqueLeadIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Select at least one campaign customer to export",
+      });
+    }
+
+    if (uniqueLeadIds.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "A maximum of 500 campaign customers can be exported at once",
+      });
+    }
+
+    const invalidLeadIds = uniqueLeadIds.filter(
+      (leadId) => !mongoose.Types.ObjectId.isValid(leadId)
+    );
+
+    if (invalidLeadIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more campaign customer IDs are invalid",
+      });
+    }
+
+    const leads = await Lead.find({
+      _id: {
+        $in: uniqueLeadIds,
+      },
+    }).lean();
+
+    const leadsById = new Map(
+      leads.map((lead) => [String(lead._id), lead])
+    );
+    const orderedLeads = uniqueLeadIds
+      .map((leadId) => leadsById.get(leadId))
+      .filter(Boolean);
+
+    if (orderedLeads.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No campaign customers were found",
+      });
+    }
+
+    const headers = [
+      "Customer Name",
+      "Phone Number",
+      "Campaign",
+      "Call Status",
+      "Provider Status",
+      "Selected Service",
+      "Callback Requested",
+      "Opted Out",
+      "Call Attempts",
+      "Call Duration Seconds",
+      "Last Called",
+      "Provider Call ID",
+    ];
+
+    const rows = orderedLeads.map((lead) => [
+      lead.name || "Unknown Customer",
+      lead.phone || "",
+      lead.batchName || "",
+      lead.callStatus || "",
+      lead.providerStatus || "",
+      exportServiceLabels[lead.selectedService] || "",
+      lead.callbackRequested ? "Yes" : "No",
+      lead.optedOut ? "Yes" : "No",
+      lead.callAttempts || 0,
+      lead.callDuration || 0,
+      formatExportDate(lead.lastCalledAt),
+      lead.providerCallId || "",
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map(escapeCsvValue).join(","))
+      .join("\r\n");
+    const date = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="geojit-campaign-results-${date}.csv"`
+    );
+
+    return res.status(200).send(`\uFEFF${csvContent}`);
+  } catch (error) {
+    console.error("Export campaign results error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to export campaign results",
+      error: error.message,
+    });
+  }
+}
+
 module.exports = {
   createLead,
   getLeads,
   uploadLeads,
   exportInterestedLeads,
+  exportCampaignResults,
 };

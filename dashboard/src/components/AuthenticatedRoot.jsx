@@ -138,6 +138,20 @@ function AuthenticatedRoot() {
     scheduleExpiry(response.expiresAt);
   }
 
+  const handleLogoutRequest = useCallback(() => {
+    const adminEmail = admin?.email || "this administrator account";
+
+    const confirmed = window.confirm(
+      `Are you sure you want to log out from ${adminEmail}?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    logout("");
+  }, [admin?.email, logout]);
+
   if (checkingSession) {
     return (
       <main className="auth-loading-screen">
@@ -161,7 +175,7 @@ function AuthenticatedRoot() {
   return (
     <App
       admin={admin}
-      onLogout={() => logout("")}
+      onLogout={handleLogoutRequest}
     />
   );
 }

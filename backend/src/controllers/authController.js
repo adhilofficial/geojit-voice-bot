@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 5;
+const MAX_NUMBERED_ADMINS = 20;
 const loginAttempts = new Map();
 const DUMMY_PASSWORD_HASH =
   "$2b$12$SPOQpzAnyZTHSmG15IKoTuSx22m2CVN491lt/8MseTOeoLnSM/S4y";
@@ -35,44 +36,92 @@ function getAttemptRecord(key) {
   return current;
 }
 
-function parseAdminEmails(value) {
-  return String(value || "")
-    .split(",")
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean);
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeHash(value) {
+  return String(value || "").trim();
+}
+
+function createConfigurationError(message) {
+  const error = new Error(message);
+  error.code = "AUTH_NOT_CONFIGURED";
+  return error;
+}
+
+function collectAdminUsers() {
+  const users = [];
+  const seenEmails = new Set();
+
+  function addAdmin(emailValue, passwordHashValue, label) {
+    const email = normalizeEmail(emailValue);
+    const passwordHash = normalizeHash(passwordHashValue);
+
+    if (!email && !passwordHash) {
+      return;
+    }
+
+    if (!email || !passwordHash) {
+      throw createConfigurationError(
+        `${label} requires both an email and a password hash`
+      );
+    }
+
+    if (seenEmails.has(email)) {
+      throw createConfigurationError(
+        `Duplicate administrator email configured: ${email}`
+      );
+    }
+
+    seenEmails.add(email);
+    users.push({
+      email,
+      passwordHash,
+      role: "admin",
+    });
+  }
+
+  // Primary administrator. These names are kept for backward compatibility.
+  addAdmin(
+    process.env.ADMIN_EMAIL,
+    process.env.ADMIN_PASSWORD_HASH,
+    "Primary administrator"
+  );
+
+  // Additional administrators use numbered environment-variable pairs.
+  for (let index = 2; index <= MAX_NUMBERED_ADMINS; index += 1) {
+    addAdmin(
+      process.env[`ADMIN_EMAIL_${index}`],
+      process.env[`ADMIN_PASSWORD_HASH_${index}`],
+      `Administrator ${index}`
+    );
+  }
+
+  if (users.length === 0) {
+    throw createConfigurationError(
+      "At least one administrator email and password hash must be configured"
+    );
+  }
+
+  return users;
 }
 
 function getAuthConfiguration() {
-  // ADMIN_EMAIL is kept for backward compatibility.
-  // ADMIN_EMAILS accepts a comma-separated list of extra admins.
-  const adminEmails = Array.from(
-    new Set([
-      ...parseAdminEmails(process.env.ADMIN_EMAIL),
-      ...parseAdminEmails(process.env.ADMIN_EMAILS),
-    ])
-  );
-
-  const passwordHash = String(
-    process.env.ADMIN_PASSWORD_HASH || ""
-  ).trim();
-  const jwtSecret = String(
-    process.env.JWT_SECRET || ""
-  ).trim();
+  const adminUsers = collectAdminUsers();
+  const jwtSecret = String(process.env.JWT_SECRET || "").trim();
   const expiresIn = String(
     process.env.JWT_EXPIRES_IN || "8h"
   ).trim();
 
-  if (adminEmails.length === 0 || !passwordHash || !jwtSecret) {
-    const error = new Error(
-      "Admin authentication is not configured on the server"
+  if (!jwtSecret) {
+    throw createConfigurationError(
+      "JWT_SECRET is required for administrator authentication"
     );
-    error.code = "AUTH_NOT_CONFIGURED";
-    throw error;
   }
 
   return {
-    adminEmails,
-    passwordHash,
+    adminUsers,
     jwtSecret,
     expiresIn,
   };
@@ -108,15 +157,9 @@ async function login(req, res) {
       });
     }
 
-    const {
-      adminEmails,
-      passwordHash,
-      jwtSecret,
-      expiresIn,
-    } = getAuthConfiguration();
-    const email = String(req.body?.email || "")
-      .trim()
-      .toLowerCase();
+    const { adminUsers, jwtSecret, expiresIn } =
+      getAuthConfiguration();
+    const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || "");
 
     if (!email || !password) {
@@ -126,13 +169,17 @@ async function login(req, res) {
       });
     }
 
-    const emailMatches = adminEmails.includes(email);
-    const passwordMatches = await bcrypt.compare(
-      password,
-      emailMatches ? passwordHash : DUMMY_PASSWORD_HASH
+    const matchedAdmin = adminUsers.find(
+      (admin) => admin.email === email
     );
 
-    if (!emailMatches || !passwordMatches) {
+    // Always compare a hash so unknown emails do not return faster.
+    const passwordMatches = await bcrypt.compare(
+      password,
+      matchedAdmin?.passwordHash || DUMMY_PASSWORD_HASH
+    );
+
+    if (!matchedAdmin || !passwordMatches) {
       attempt.count += 1;
       loginAttempts.set(key, attempt);
 
@@ -146,8 +193,8 @@ async function login(req, res) {
 
     const token = jwt.sign(
       {
-        email,
-        role: "admin",
+        email: matchedAdmin.email,
+        role: matchedAdmin.role,
       },
       jwtSecret,
       {
@@ -169,8 +216,8 @@ async function login(req, res) {
         ? new Date(decoded.exp * 1000).toISOString()
         : null,
       admin: {
-        email,
-        role: "admin",
+        email: matchedAdmin.email,
+        role: matchedAdmin.role,
       },
     });
   } catch (error) {
